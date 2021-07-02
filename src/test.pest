@@ -1,0 +1,23 @@
+WS0 = _{ (" " | "\t")* }
+WS1 = _{ (" " | "\t")+ }
+
+// extended comment, SQL line commend follow by "param"
+PREFIX = _{ "-"{2} ~ WS1 ~ "param" }
+
+// variable identifer, start with alpha, consist of alpha, number and "_"
+IDENT = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// type identifier
+TY = { "str" | "int" | "float" | "raw" }
+
+// values
+STRING_VAL =  { "'" ~ ("\\'" | (!"'" ~ ANY) )* ~ "'" }
+INT_VAL = { ("+" | "-")? ~ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ }
+FLOAT_VAL = { ("+" | "-")? ~ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+RAW_VAL = { "#" ~ ("\\#" | (!"#" ~ ANY))* ~ "#" }
+VAL = { STRING_VAL | INT_VAL | FLOAT_VAL | RAW_VAL }
+
+PARAM = { IDENT ~ WS0 ~ ":" ~ WS0 ~ TY ~ ( WS0 ~ "=" ~ WS0 ~ VAL ) }
+
+HELP_MSG = { ANY* }
+LINE = { SOI ~ PREFIX ~ WS1 ~ PARAM ~ WS0 ~ ("/"{2} ~ WS1 ~ HELP_MSG)? ~ EOI }
