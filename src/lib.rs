@@ -12,6 +12,8 @@ use nom::{
     IResult,
 };
 
+mod parser;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
     Var(String),
@@ -21,6 +23,7 @@ pub enum Token {
 #[derive(Debug, PartialEq)]
 pub struct VarIdent(String);
 
+/// parse `@var_name` 
 fn parse_var<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, VarIdent, E> {
