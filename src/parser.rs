@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use clap::{App, Arg};
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_till, take_while},
@@ -366,16 +365,18 @@ impl Program {
     }
 
     pub fn get_matches(&self) {
-        let mut app = App::new("psql");
+        use getopts::Options;
+        use std::env::args;
+        let mut opts = Options::new();
         for p in self.params.iter() {
-            app = app.arg(
-                Arg::with_name(&p.name)
-                    .long(&p.name)
-                    .takes_value(true)
-                    .help(&p.help),
-            )
+            opts.optopt("", &p.name, &p.help, "");
         }
-        let matches = app.get_matches();
-        dbg!(matches);
+        let cmd_args: Vec<String> = args()
+            .collect::<Vec<String>>()
+            .into_iter()
+            .skip(1)
+            .collect();
+        println!("{}", opts.usage("psql"));
+        dbg!(opts.parse(&cmd_args));
     }
 }
