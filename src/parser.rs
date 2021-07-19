@@ -1,33 +1,64 @@
+use std::collections::{HashMap, HashSet};
+
+use clap::{App, Arg};
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_till, take_while},
     character::complete::{alpha1, alphanumeric1, char},
-    combinator::{cut, map, recognize, verify},
+    combinator::{cut, map, opt, recognize, verify},
     error::context,
     multi::{many0, separated_list0},
     number::complete::double as nom_double,
-    sequence::{pair, preceded, terminated, tuple},
+    sequence::{self, pair, preceded, terminated, tuple},
     IResult,
 };
+use sqlparser::{
+    dialect::Dialect,
+    tokenizer::{Token, Whitespace},
+};
+use thiserror::Error;
 
+#[derive(Debug, PartialEq)]
 pub enum ParamValue {
     Str(String),
-    Double(f64),
+    Num(f64),
     Raw(String),
     Array(Vec<ParamValue>),
 }
 
+impl ToString for ParamValue {
+    fn to_string(&self) -> String {
+        match self {
+            ParamValue::Str(str) => str.clone(),
+            ParamValue::Num(num) => num.to_string(),
+            ParamValue::Raw(raw) => raw.clone(),
+            ParamValue::Array(arr) => {
+                format!(
+                    "[{}]",
+                    arr.iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum InnerTy {
     Str,
-    Double,
+    Num,
     Raw,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum ParamTy {
     Basic(InnerTy),
     Array(InnerTy),
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Param {
     pub name: String,
     pub ty: ParamTy,
@@ -35,14 +66,38 @@ pub struct Param {
     pub help: String,
 }
 
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("invalid variable, expect identifier, found {0}")]
+    InvalidVariable(Token),
+    #[error("unused params {0:?}")]
+    UnusedParams(HashSet<String>),
+    #[error("missing params {0:?}")]
+    MissingParams(HashSet<String>),
+    #[error("duplicated param {0}")]
+    DuplicatedParam(String),
+}
+
 fn double_quote_str(input: &str) -> IResult<&str, &str> {
     let not_quote_slash = is_not("\"\\");
-    verify(not_quote_slash, |s: &str| !s.is_empty())(input)
+    context(
+        "double quote str",
+        map(
+            tuple((tag("\""), not_quote_slash, tag("\""))),
+            |(_, str, _)| str,
+        ),
+    )(input)
 }
 
 fn single_quote_str(input: &str) -> IResult<&str, &str> {
     let not_quote_slash = is_not("'\\");
-    verify(not_quote_slash, |s: &str| !s.is_empty())(input)
+    context(
+        "single quote str",
+        map(
+            tuple((tag("'"), not_quote_slash, tag("'"))),
+            |(_, str, _)| str,
+        ),
+    )(input)
 }
 
 fn str(input: &str) -> IResult<&str, ParamValue> {
@@ -55,16 +110,16 @@ fn str(input: &str) -> IResult<&str, ParamValue> {
 }
 
 fn double(input: &str) -> IResult<&str, ParamValue> {
-    context("double", map(nom_double, |val| ParamValue::Double(val)))(input)
+    context("double", map(nom_double, |val| ParamValue::Num(val)))(input)
 }
 
 fn raw(input: &str) -> IResult<&str, ParamValue> {
     let not_quote_slash = is_not("#\\");
     context(
-        "raw",
+        "raw val",
         map(
-            verify(not_quote_slash, |s: &str| !s.is_empty()),
-            |val: &str| ParamValue::Raw(val.to_string()),
+            tuple((tag("#"), not_quote_slash, tag("#"))),
+            |(_, str, _): (&str, &str, &str)| ParamValue::Raw(str.to_string()),
         ),
     )(input)
 }
@@ -83,17 +138,25 @@ fn no_newline_sp(input: &str) -> IResult<&str, &str> {
     take_while(move |c| chars.contains(c))(input)
 }
 
-fn parse_array(input: &str) -> IResult<&str, Vec<ParamValue>> {
+fn parse_array(input: &str) -> IResult<&str, ParamValue> {
+    // TODO should check type consistent
     context(
         "array",
-        preceded(
-            char('['),
-            cut(terminated(
-                separated_list0(preceded(sp, char(',')), basic_val),
-                preceded(sp, char(']')),
-            )),
+        map(
+            preceded(
+                tuple((tag("["), no_newline_sp)),
+                terminated(
+                    separated_list0(tuple((no_newline_sp, tag(","), no_newline_sp)), basic_val),
+                    tuple((no_newline_sp, tag("]"))),
+                ),
+            ),
+            |val| ParamValue::Array(val),
         ),
     )(input)
+}
+
+fn parse_default(input: &str) -> IResult<&str, ParamValue> {
+    alt((parse_array, basic_val))(input)
 }
 
 fn identifier(input: &str) -> IResult<&str, String> {
@@ -114,7 +177,7 @@ fn basic_ty(input: &str) -> IResult<&str, InnerTy> {
         "basic ty",
         alt((
             map(tag("str"), |_| InnerTy::Str),
-            map(tag("double"), |_| InnerTy::Double),
+            map(tag("num"), |_| InnerTy::Num),
             map(tag("raw"), |_| InnerTy::Raw),
         )),
     )(input)
@@ -144,11 +207,175 @@ fn parse_ty(input: &str) -> IResult<&str, ParamTy> {
 /// format
 /// --? <param_name>: <ty> [= <default>] [// <help message>]
 fn param(input: &str) -> IResult<&str, Param> {
-    let (input, _) = tag("? ")(input)?;
-    let (input, name) = identifier(input)?;
-    let (input, _) = take_till(|c| c == ':')(input)?;
-    let (input, _) = take_while(|c| c == ' ' || c == '\t')(input)?;
-    let (input, ty) = parse_ty(input)?;
-    
-    todo!()
+    let (input, (name, ty)) = map(
+        tuple((
+            tag("?"),
+            no_newline_sp,
+            identifier,
+            no_newline_sp,
+            tag(":"),
+            no_newline_sp,
+            parse_ty,
+        )),
+        |(_, _, name, _, _, _, ty)| (name, ty),
+    )(input)?;
+    let (input, default) = context(
+        "default",
+        opt(map(
+            tuple((no_newline_sp, tag("="), no_newline_sp, parse_default)),
+            |(_, _, _, default)| default,
+        )),
+    )(input)?;
+    let (input, help) = context(
+        "help",
+        opt(map(
+            tuple((no_newline_sp, tag("//"), no_newline_sp, is_not("\r\n"))),
+            |(_, _, _, help)| help.to_string(),
+        )),
+    )(input)?;
+    let param = Param {
+        name,
+        ty,
+        default,
+        help: help.unwrap_or_default(),
+    };
+    Ok((input, param))
+}
+
+#[test]
+fn parse_param() {
+    let cases = vec![
+        ("complete num", "? age : num = 10 // help msg"),
+        (
+            "complete double quote str",
+            "? addr: str = \"SH\"//where are you from?",
+        ),
+        (
+            "complete single quote str",
+            "? addr: str = 'SH'//where are you from?",
+        ),
+        (
+            "complete raw",
+            "? where: raw = #select * from ()# // insert raw",
+        ),
+        (
+            "complete array",
+            "? arr: [num] = [ 1, 2, 3 ] // array param",
+        ),
+        ("no default", "? age: num // help msg"),
+        ("no help msg", "? age: num = 10"),
+        ("simple", "? age: num"),
+    ];
+    for (name, input) in cases.iter() {
+        println!("[{}] {} -> {:?}", name, input, param(input));
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum VariableToken {
+    Var(String),
+    Normal(Token),
+}
+
+#[derive(Debug)]
+pub struct Program {
+    pub params: Vec<Param>,
+    pub tokens: Vec<VariableToken>,
+}
+
+impl Program {
+    pub fn tokenize(dialect: &impl Dialect, program: &str) -> Result<Program, ParseError> {
+        let tokens = sqlparser::tokenizer::Tokenizer::new(dialect, program)
+            .tokenize()
+            .unwrap();
+        let mut processed = vec![];
+        let mut params = vec![];
+        let mut expect_word = false;
+        for token in tokens.into_iter() {
+            match token {
+                Token::AtSign => {
+                    if expect_word {
+                        return Err(ParseError::InvalidVariable(token));
+                    } else {
+                        expect_word = true
+                    }
+                }
+                Token::Word(word) => {
+                    if expect_word {
+                        processed.push(VariableToken::Var(word.to_string()));
+                        expect_word = false
+                    } else {
+                        processed.push(VariableToken::Normal(Token::Word(word)))
+                    }
+                }
+                Token::Whitespace(ws) => match ws {
+                    Whitespace::SingleLineComment { comment, prefix } => {
+                        if let Ok((_, param)) = param(&comment) {
+                            params.push(param);
+                        } else {
+                            processed.push(VariableToken::Normal(Token::Whitespace(
+                                Whitespace::SingleLineComment { comment, prefix },
+                            )))
+                        }
+                    }
+                    _ => processed.push(VariableToken::Normal(Token::Whitespace(ws))),
+                },
+                _ => {
+                    if expect_word {
+                        return Err(ParseError::InvalidVariable(token));
+                    } else {
+                        processed.push(VariableToken::Normal(token))
+                    }
+                }
+            }
+        }
+        let param_names_vec = params
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<String>>();
+        let mut param_names = HashSet::new();
+        for p in param_names_vec.into_iter() {
+            if !param_names.insert(p.clone()) {
+                return Err(ParseError::DuplicatedParam(p));
+            }
+        }
+        let mut var_names = HashSet::new();
+        for t in processed.iter() {
+            if let VariableToken::Var(name) = t {
+                var_names.insert(name.clone());
+            }
+        }
+        let missing: HashSet<String> = var_names
+            .difference(&param_names)
+            .map(|v| v.clone())
+            .collect();
+        if !missing.is_empty() {
+            return Err(ParseError::MissingParams(missing));
+        }
+        let unused: HashSet<String> = param_names
+            .difference(&var_names)
+            .map(|v| v.clone())
+            .collect();
+        if !unused.is_empty() {
+            return Err(ParseError::UnusedParams(unused));
+        }
+        Ok(Program {
+            tokens: processed,
+            params,
+        })
+    }
+
+    pub fn get_matches(&self) {
+        let mut app = App::new("psql");
+        for p in self.params.iter() {
+            app = app.arg(
+                Arg::with_name(&p.name)
+                    .long(&p.name)
+                    .takes_value(true)
+                    .help(&p.help),
+            )
+        }
+        let matches = app.get_matches();
+        dbg!(matches);
+    }
 }

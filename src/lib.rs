@@ -12,7 +12,7 @@ use nom::{
     IResult,
 };
 
-mod parser;
+pub mod parser;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
