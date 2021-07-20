@@ -1,4 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    process::exit,
+    str::FromStr,
+};
 
 use nom::{
     branch::alt,
@@ -11,13 +15,10 @@ use nom::{
     sequence::{self, pair, preceded, terminated, tuple},
     IResult,
 };
-use sqlparser::{
-    dialect::Dialect,
-    tokenizer::{Token, Whitespace},
-};
+use sqlparser::{dialect::Dialect, test_utils::number, tokenizer::{Token, Whitespace}};
 use thiserror::Error;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ParamValue {
     Str(String),
     Num(f64),
@@ -28,7 +29,7 @@ pub enum ParamValue {
 impl ToString for ParamValue {
     fn to_string(&self) -> String {
         match self {
-            ParamValue::Str(str) => str.clone(),
+            ParamValue::Str(str) => format!("'{}'", str),
             ParamValue::Num(num) => num.to_string(),
             ParamValue::Raw(raw) => raw.clone(),
             ParamValue::Array(arr) => {
@@ -44,6 +45,23 @@ impl ToString for ParamValue {
     }
 }
 
+// impl FromStr for ParamValue {
+//     type Err = String;
+
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         let (remaining, val) = parse_default(s).map_err(|e| e.to_string())?;
+//         if !remaining.is_empty() {
+//             Err(format!(
+//                 "invalid value, {} with remaining {}",
+//                 val.to_string(),
+//                 remaining
+//             ))
+//         } else {
+//             Ok(val)
+//         }
+//     }
+// }
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum InnerTy {
     Str,
@@ -51,10 +69,29 @@ pub enum InnerTy {
     Raw,
 }
 
+impl ToString for InnerTy {
+    fn to_string(&self) -> String {
+        match self {
+            InnerTy::Str => "str".to_string(),
+            InnerTy::Num => "num".to_string(),
+            InnerTy::Raw => "raw".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParamTy {
     Basic(InnerTy),
     Array(InnerTy),
+}
+
+impl ToString for ParamTy {
+    fn to_string(&self) -> String {
+        match self {
+            ParamTy::Basic(ty) => ty.to_string(),
+            ParamTy::Array(ty) => format!("[{}]", ty.to_string()),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -364,19 +401,100 @@ impl Program {
         })
     }
 
-    pub fn get_matches(&self) {
+    pub fn get_matches(&self) -> HashMap<String, ParamValue> {
         use getopts::Options;
         use std::env::args;
         let mut opts = Options::new();
+        opts.optflag("h", "help", "print usage message");
         for p in self.params.iter() {
-            opts.optopt("", &p.name, &p.help, "");
+            match (&p.default, &p.ty) {
+                (None, ParamTy::Basic(_)) => {
+                    opts.reqopt(
+                        "",
+                        &p.name,
+                        &p.help,
+                        &format!("*<{}> {}", p.name.to_uppercase(), p.ty.to_string()),
+                    );
+                }
+                (None, ParamTy::Array(_)) => {
+                    opts.optmulti(
+                        "",
+                        &p.name,
+                        &p.name,
+                        &format!("*<{}> {}", p.name.to_uppercase(), p.ty.to_string()),
+                    );
+                }
+                (Some(default), ParamTy::Basic(_)) => {
+                    opts.optopt(
+                        "",
+                        &p.name,
+                        &p.help,
+                        &format!(
+                            "[{}] {} {}",
+                            p.name.to_uppercase(),
+                            p.ty.to_string(),
+                            default.to_string()
+                        ),
+                    );
+                }
+                (Some(default), ParamTy::Array(_)) => {
+                    opts.optopt(
+                        "",
+                        &p.name,
+                        &p.help,
+                        &format!(
+                            "[{}] {} {}",
+                            p.name.to_uppercase(),
+                            p.ty.to_string(),
+                            default.to_string()
+                        ),
+                    );
+                }
+            }
         }
         let cmd_args: Vec<String> = args()
             .collect::<Vec<String>>()
             .into_iter()
             .skip(1)
             .collect();
-        println!("{}", opts.usage("psql"));
-        dbg!(opts.parse(&cmd_args));
+        if cmd_args.contains(&"-h".to_string()) || cmd_args.contains(&"--help".to_string()) {
+            println!("{}", opts.usage("psql"));
+            exit(0)
+        }
+        match opts.parse(&cmd_args) {
+            Ok(matches) => {
+                let mut values = HashMap::new();
+                for p in self.params.iter() {
+                    let ocr: Option<String> = matches.opt_str(&p.name);
+                    match (ocr, p.default.clone()) {
+                        (None, None) => {
+                            println!("missing required option {}\n{}", p.name, opts.usage("psql"));
+                        },
+                        (None, Some(default)) => {
+                            values.insert(p.name.clone(), default);
+                        },
+                        (Some(val_str), _) => {
+                            match &p.ty {
+                                ParamTy::Basic(ty) => {
+                                    match ty {
+                                        InnerTy::Str => Ok(ParamValue::Str(val_str)),
+                                        InnerTy::Num => double(&val_str).map(|(remain, val)| {
+                                            
+                                        }),
+                                        InnerTy::Raw => todo!(),
+                                    }
+                                },
+                                ParamTy::Array(_) => todo!(),
+                            }
+                        },
+                    }
+                }
+                values
+            }
+            Err(e) => {
+                println!("{}\n\n{}", e, opts.usage("psql"));
+                exit(1);
+            }
+        }
     }
 }

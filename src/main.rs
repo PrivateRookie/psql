@@ -4,12 +4,14 @@ use sqlparser::parser::Parser;
 fn main() {
     let sql = "
 --? age: num = 10 // useful help message
---? pattern: str // :+))))))
---? invalid
+--? pattern: str // help
+--? addrs: [str] = ['sh', 'beijing'] // address
+--? pp: [num] // 必须使用???
 -- single line
-select * from table where age=@age where name like @pattern
+select * from table where age=@age where name like @pattern and addr in @addrs and scores in @pp;
 ";
     let dialect = MySqlDialect {};
     let prog = Program::tokenize(&dialect, sql).unwrap();
-    prog.get_matches();
+    let values = prog.get_matches();
+    println!("{:#?}", values);
 }
