@@ -15,7 +15,11 @@ use nom::{
     sequence::{self, pair, preceded, terminated, tuple},
     IResult,
 };
-use sqlparser::{dialect::Dialect, test_utils::number, tokenizer::{Token, Whitespace}};
+use sqlparser::{
+    dialect::Dialect,
+    test_utils::number,
+    tokenizer::{Token, Whitespace},
+};
 use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -40,6 +44,31 @@ impl ToString for ParamValue {
                         .collect::<Vec<String>>()
                         .join(", ")
                 )
+            }
+        }
+    }
+}
+
+impl ParamValue {
+    /// parse from arg string
+    pub fn from_args(ty: &InnerTy, arg_str: &str) -> Result<Self, String> {
+        match ty {
+            InnerTy::Str => Ok(ParamValue::Str(arg_str.to_string())),
+            InnerTy::Num => {
+                let (remain, val) = double(arg_str).map_err(|e| e.to_string())?;
+                if remain.is_empty() {
+                    Ok(val)
+                } else {
+                    Err(format!("invalid double value {}", arg_str))
+                }
+            }
+            InnerTy::Raw => {
+                let (remain, val) = raw(arg_str).map_err(|e| e.to_string())?;
+                if remain.is_empty() {
+                    Ok(val)
+                } else {
+                    Err(format!("invalid raw val {}", arg_str))
+                }
             }
         }
     }
@@ -438,12 +467,12 @@ impl Program {
                     );
                 }
                 (Some(default), ParamTy::Array(_)) => {
-                    opts.optopt(
+                    opts.optmulti(
                         "",
                         &p.name,
                         &p.help,
                         &format!(
-                            "[{}] {} {}",
+                            "<{}> {} {}",
                             p.name.to_uppercase(),
                             p.ty.to_string(),
                             default.to_string()
@@ -465,28 +494,59 @@ impl Program {
             Ok(matches) => {
                 let mut values = HashMap::new();
                 for p in self.params.iter() {
-                    let ocr: Option<String> = matches.opt_str(&p.name);
-                    match (ocr, p.default.clone()) {
-                        (None, None) => {
-                            println!("missing required option {}\n{}", p.name, opts.usage("psql"));
-                        },
-                        (None, Some(default)) => {
-                            values.insert(p.name.clone(), default);
-                        },
-                        (Some(val_str), _) => {
-                            match &p.ty {
-                                ParamTy::Basic(ty) => {
-                                    match ty {
-                                        InnerTy::Str => Ok(ParamValue::Str(val_str)),
-                                        InnerTy::Num => double(&val_str).map(|(remain, val)| {
-                                            
-                                        }),
-                                        InnerTy::Raw => todo!(),
+                    match &p.ty {
+                        ParamTy::Basic(ty) => {
+                            let ocr: Option<String> = matches.opt_str(&p.name);
+                            match (ocr, p.default.clone()) {
+                                (None, None) => {
+                                    println!(
+                                        "missing required option {}\n{}",
+                                        p.name,
+                                        opts.usage("psql")
+                                    );
+                                }
+                                (None, Some(default)) => {
+                                    values.insert(p.name.clone(), default);
+                                }
+                                (Some(arg_str), _) => match ParamValue::from_args(ty, &arg_str) {
+                                    Ok(val) => {
+                                        values.insert(p.name.clone(), val);
+                                    }
+                                    Err(e) => {
+                                        println!("{}\n{}", e, opts.usage("psql"));
+                                        exit(1);
                                     }
                                 },
-                                ParamTy::Array(_) => todo!(),
                             }
-                        },
+                        }
+                        ParamTy::Array(ty) => {
+                            let ocrs = matches.opt_strs(&p.name);
+                            match (ocrs.is_empty(), p.default.clone()) {
+                                (true, None) => {
+                                    println!(
+                                        "missing required option {}\n{}",
+                                        p.name,
+                                        opts.usage("psql")
+                                    );
+                                }
+                                (true, Some(default)) => {
+                                    values.insert(p.name.clone(), default);
+                                }
+                                (false, _) => {
+                                    let mut vals = vec![];
+                                    for arg_str in ocrs.iter() {
+                                        match ParamValue::from_args(ty, arg_str) {
+                                            Ok(val) => vals.push(val),
+                                            Err(e) => {
+                                                println!("{}\n{}", e, opts.usage("psql"));
+                                                exit(1);
+                                            }
+                                        }
+                                    }
+                                    values.insert(p.name.clone(), ParamValue::Array(vals));
+                                }
+                            }
+                        }
                     }
                 }
                 values
