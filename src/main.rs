@@ -13,5 +13,5 @@ select * from table where age=@age where name like @pattern and addr in @addrs a
     let dialect = MySqlDialect {};
     let prog = Program::tokenize(&dialect, sql).unwrap();
     let values = prog.get_matches();
-    println!("{:#?}", values);
+    dbg!(prog.render(&values));
 }

@@ -1,26 +1,23 @@
-use std::{
-    collections::{HashMap, HashSet},
-    process::exit,
-    str::FromStr,
-};
-
+use crate::{errors::PSqlError, token::VariableToken};
 use nom::{
     branch::alt,
-    bytes::complete::{is_not, tag, take_till, take_while},
+    bytes::complete::{is_not, tag, take_while},
     character::complete::{alpha1, alphanumeric1, char},
-    combinator::{cut, map, opt, recognize, verify},
+    combinator::{map, opt, recognize},
     error::context,
     multi::{many0, separated_list0},
     number::complete::double as nom_double,
-    sequence::{self, pair, preceded, terminated, tuple},
+    sequence::{pair, preceded, terminated, tuple},
     IResult,
 };
 use sqlparser::{
     dialect::Dialect,
-    test_utils::number,
     tokenizer::{Token, Whitespace},
 };
-use thiserror::Error;
+use std::{
+    collections::{HashMap, HashSet},
+    process::exit,
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParamValue {
@@ -38,7 +35,7 @@ impl ToString for ParamValue {
             ParamValue::Raw(raw) => raw.clone(),
             ParamValue::Array(arr) => {
                 format!(
-                    "[{}]",
+                    "({})",
                     arr.iter()
                         .map(|i| i.to_string())
                         .collect::<Vec<String>>()
@@ -51,7 +48,9 @@ impl ToString for ParamValue {
 
 impl ParamValue {
     /// parse from arg string
-    pub fn from_args(ty: &InnerTy, arg_str: &str) -> Result<Self, String> {
+    ///
+    /// **NOTE** string parsed from arg isn't wrapped with `'` or `"`
+    pub fn from_arg_str(ty: &InnerTy, arg_str: &str) -> Result<Self, String> {
         match ty {
             InnerTy::Str => Ok(ParamValue::Str(arg_str.to_string())),
             InnerTy::Num => {
@@ -73,23 +72,6 @@ impl ParamValue {
         }
     }
 }
-
-// impl FromStr for ParamValue {
-//     type Err = String;
-
-//     fn from_str(s: &str) -> Result<Self, Self::Err> {
-//         let (remaining, val) = parse_default(s).map_err(|e| e.to_string())?;
-//         if !remaining.is_empty() {
-//             Err(format!(
-//                 "invalid value, {} with remaining {}",
-//                 val.to_string(),
-//                 remaining
-//             ))
-//         } else {
-//             Ok(val)
-//         }
-//     }
-// }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum InnerTy {
@@ -129,18 +111,6 @@ pub struct Param {
     pub ty: ParamTy,
     pub default: Option<ParamValue>,
     pub help: String,
-}
-
-#[derive(Debug, Error)]
-pub enum ParseError {
-    #[error("invalid variable, expect identifier, found {0}")]
-    InvalidVariable(Token),
-    #[error("unused params {0:?}")]
-    UnusedParams(HashSet<String>),
-    #[error("missing params {0:?}")]
-    MissingParams(HashSet<String>),
-    #[error("duplicated param {0}")]
-    DuplicatedParam(String),
 }
 
 fn double_quote_str(input: &str) -> IResult<&str, &str> {
@@ -191,11 +161,6 @@ fn raw(input: &str) -> IResult<&str, ParamValue> {
 
 fn basic_val(input: &str) -> IResult<&str, ParamValue> {
     alt((str, raw, double))(input)
-}
-
-fn sp(input: &str) -> IResult<&str, &str> {
-    let chars = " \t\r\n";
-    take_while(move |c| chars.contains(c))(input)
 }
 
 fn no_newline_sp(input: &str) -> IResult<&str, &str> {
@@ -268,9 +233,6 @@ fn parse_ty(input: &str) -> IResult<&str, ParamTy> {
 }
 
 /// parse param line
-///
-/// format
-/// --? <param_name>: <ty> [= <default>] [// <help message>]
 fn param(input: &str) -> IResult<&str, Param> {
     let (input, (name, ty)) = map(
         tuple((
@@ -336,12 +298,7 @@ fn parse_param() {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum VariableToken {
-    Var(String),
-    Normal(Token),
-}
-
+/// a sql file, may contains multi statements
 #[derive(Debug)]
 pub struct Program {
     pub params: Vec<Param>,
@@ -349,7 +306,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn tokenize(dialect: &impl Dialect, program: &str) -> Result<Program, ParseError> {
+    pub fn tokenize(dialect: &impl Dialect, program: &str) -> Result<Program, PSqlError> {
         let tokens = sqlparser::tokenizer::Tokenizer::new(dialect, program)
             .tokenize()
             .unwrap();
@@ -360,7 +317,7 @@ impl Program {
             match token {
                 Token::AtSign => {
                     if expect_word {
-                        return Err(ParseError::InvalidVariable(token));
+                        return Err(PSqlError::InvalidVariable(token));
                     } else {
                         expect_word = true
                     }
@@ -387,21 +344,23 @@ impl Program {
                 },
                 _ => {
                     if expect_word {
-                        return Err(ParseError::InvalidVariable(token));
+                        return Err(PSqlError::InvalidVariable(token));
                     } else {
                         processed.push(VariableToken::Normal(token))
                     }
                 }
             }
         }
+        // validation check
         let param_names_vec = params
             .iter()
             .map(|p| p.name.clone())
             .collect::<Vec<String>>();
+        // 1. check duplication
         let mut param_names = HashSet::new();
         for p in param_names_vec.into_iter() {
             if !param_names.insert(p.clone()) {
-                return Err(ParseError::DuplicatedParam(p));
+                return Err(PSqlError::DuplicatedParam(p));
             }
         }
         let mut var_names = HashSet::new();
@@ -410,19 +369,21 @@ impl Program {
                 var_names.insert(name.clone());
             }
         }
+        // 2. check missing arguments
         let missing: HashSet<String> = var_names
             .difference(&param_names)
             .map(|v| v.clone())
             .collect();
         if !missing.is_empty() {
-            return Err(ParseError::MissingParams(missing));
+            return Err(PSqlError::MissingParams(missing));
         }
+        // 3. check used arguments
         let unused: HashSet<String> = param_names
             .difference(&var_names)
             .map(|v| v.clone())
             .collect();
         if !unused.is_empty() {
-            return Err(ParseError::UnusedParams(unused));
+            return Err(PSqlError::UnusedParams(unused));
         }
         Ok(Program {
             tokens: processed,
@@ -430,6 +391,8 @@ impl Program {
         })
     }
 
+    /// read from args
+    // TODO replace exit with result
     pub fn get_matches(&self) -> HashMap<String, ParamValue> {
         use getopts::Options;
         use std::env::args;
@@ -508,15 +471,17 @@ impl Program {
                                 (None, Some(default)) => {
                                     values.insert(p.name.clone(), default);
                                 }
-                                (Some(arg_str), _) => match ParamValue::from_args(ty, &arg_str) {
-                                    Ok(val) => {
-                                        values.insert(p.name.clone(), val);
+                                (Some(arg_str), _) => {
+                                    match ParamValue::from_arg_str(ty, &arg_str) {
+                                        Ok(val) => {
+                                            values.insert(p.name.clone(), val);
+                                        }
+                                        Err(e) => {
+                                            println!("{}\n{}", e, opts.usage("psql"));
+                                            exit(1);
+                                        }
                                     }
-                                    Err(e) => {
-                                        println!("{}\n{}", e, opts.usage("psql"));
-                                        exit(1);
-                                    }
-                                },
+                                }
                             }
                         }
                         ParamTy::Array(ty) => {
@@ -535,7 +500,7 @@ impl Program {
                                 (false, _) => {
                                     let mut vals = vec![];
                                     for arg_str in ocrs.iter() {
-                                        match ParamValue::from_args(ty, arg_str) {
+                                        match ParamValue::from_arg_str(ty, arg_str) {
                                             Ok(val) => vals.push(val),
                                             Err(e) => {
                                                 println!("{}\n{}", e, opts.usage("psql"));
@@ -556,5 +521,24 @@ impl Program {
                 exit(1);
             }
         }
+    }
+
+    pub fn render(&self, values: &HashMap<String, ParamValue>) -> Result<String, String> {
+        let mut transformed = String::new();
+        for t in self.tokens.iter() {
+            match t {
+                VariableToken::Var(var) => {
+                    if let Some(val) = values.get(var) {
+                        transformed.push_str(&val.to_string())
+                    } else {
+                        return Err(format!("can't find {}", var));
+                    }
+                }
+                VariableToken::Normal(t) => {
+                    transformed.push_str(&t.to_string());
+                }
+            }
+        }
+        Ok(transformed)
     }
 }
