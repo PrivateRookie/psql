@@ -13,4 +13,8 @@ pub enum PSqlError {
     MissingParams(HashSet<String>),
     #[error("duplicated param {0}")]
     DuplicatedParam(String),
+    #[error("missing context value {0}")]
+    MissingContextValue(String),
+    #[error("{0}")]
+    ParseError(sqlparser::parser::ParserError),
 }

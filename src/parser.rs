@@ -27,6 +27,31 @@ pub enum ParamValue {
     Array(Vec<ParamValue>),
 }
 
+impl ParamValue {
+    pub fn to_token<D: Dialect>(self, dialect: &D) -> Vec<Token> {
+        match self {
+            ParamValue::Str(val) => vec![Token::SingleQuotedString(val)],
+            ParamValue::Num(val) => vec![Token::Number(val.to_string(), false)],
+            ParamValue::Raw(val) => sqlparser::tokenizer::Tokenizer::new(dialect, &val)
+                .tokenize()
+                .unwrap(),
+            ParamValue::Array(val) => {
+                let mut tokens = vec![];
+                tokens.push(Token::LParen);
+                let length = val.len();
+                for (idx, item) in val.into_iter().enumerate() {
+                    tokens.extend(item.to_token(dialect));
+                    if idx + 1 != length {
+                        tokens.push(Token::Comma);
+                    }
+                }
+                tokens.push(Token::RParen);
+                tokens
+            }
+        }
+    }
+}
+
 impl ToString for ParamValue {
     fn to_string(&self) -> String {
         match self {
@@ -391,12 +416,8 @@ impl Program {
         })
     }
 
-    /// read from args
-    // TODO replace exit with result
-    pub fn get_matches(&self) -> HashMap<String, ParamValue> {
-        use getopts::Options;
-        use std::env::args;
-        let mut opts = Options::new();
+    pub fn generate_options(&self) -> getopts::Options {
+        let mut opts = getopts::Options::new();
         opts.optflag("h", "help", "print usage message");
         for p in self.params.iter() {
             match (&p.default, &p.ty) {
@@ -444,6 +465,16 @@ impl Program {
                 }
             }
         }
+        opts
+    }
+
+    /// read from args
+    // TODO replace exit with result
+    pub fn get_matches(
+        &self,
+        opts: &getopts::Options,
+    ) -> Result<HashMap<String, ParamValue>, getopts::Fail> {
+        use std::env::args;
         let cmd_args: Vec<String> = args()
             .collect::<Vec<String>>()
             .into_iter()
@@ -462,11 +493,7 @@ impl Program {
                             let ocr: Option<String> = matches.opt_str(&p.name);
                             match (ocr, p.default.clone()) {
                                 (None, None) => {
-                                    println!(
-                                        "missing required option {}\n{}",
-                                        p.name,
-                                        opts.usage("psql")
-                                    );
+                                    return Err(getopts::Fail::OptionMissing(p.name.clone()));
                                 }
                                 (None, Some(default)) => {
                                     values.insert(p.name.clone(), default);
@@ -477,8 +504,9 @@ impl Program {
                                             values.insert(p.name.clone(), val);
                                         }
                                         Err(e) => {
-                                            println!("{}\n{}", e, opts.usage("psql"));
-                                            exit(1);
+                                            return Err(getopts::Fail::UnexpectedArgument(
+                                                format!("{}, {}", p.name, e),
+                                            ));
                                         }
                                     }
                                 }
@@ -488,11 +516,7 @@ impl Program {
                             let ocrs = matches.opt_strs(&p.name);
                             match (ocrs.is_empty(), p.default.clone()) {
                                 (true, None) => {
-                                    println!(
-                                        "missing required option {}\n{}",
-                                        p.name,
-                                        opts.usage("psql")
-                                    );
+                                    return Err(getopts::Fail::OptionMissing(p.name.clone()));
                                 }
                                 (true, Some(default)) => {
                                     values.insert(p.name.clone(), default);
@@ -503,8 +527,9 @@ impl Program {
                                         match ParamValue::from_arg_str(ty, arg_str) {
                                             Ok(val) => vals.push(val),
                                             Err(e) => {
-                                                println!("{}\n{}", e, opts.usage("psql"));
-                                                exit(1);
+                                                return Err(getopts::Fail::UnexpectedArgument(
+                                                    format!("{}, {}", p.name, e),
+                                                ));
                                             }
                                         }
                                     }
@@ -514,31 +539,60 @@ impl Program {
                         }
                     }
                 }
-                values
+                Ok(values)
             }
-            Err(e) => {
-                println!("{}\n\n{}", e, opts.usage("psql"));
-                exit(1);
-            }
+            Err(e) => Err(e),
         }
     }
 
-    pub fn render(&self, values: &HashMap<String, ParamValue>) -> Result<String, String> {
-        let mut transformed = String::new();
+    pub fn render<D: Dialect>(
+        &self,
+        dialect: &D,
+        context: &HashMap<String, ParamValue>,
+    ) -> Result<Vec<sqlparser::ast::Statement>, PSqlError> {
+        let mut transformed = vec![];
         for t in self.tokens.iter() {
             match t {
                 VariableToken::Var(var) => {
-                    if let Some(val) = values.get(var) {
-                        transformed.push_str(&val.to_string())
+                    if let Some(val) = context.get(var) {
+                        transformed.extend(val.clone().to_token(dialect))
                     } else {
-                        return Err(format!("can't find {}", var));
+                        return Err(PSqlError::MissingContextValue(var.clone()));
                     }
                 }
-                VariableToken::Normal(t) => {
-                    transformed.push_str(&t.to_string());
-                }
+                VariableToken::Normal(t) => transformed.push(t.clone()),
             }
         }
-        Ok(transformed)
+        log::info!(
+            "{}",
+            transformed
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<String>()
+        );
+        let mut parser = sqlparser::parser::Parser::new(transformed, dialect);
+        let mut stmts = Vec::new();
+        let mut expecting_statement_delimiter = false;
+        loop {
+            // ignore empty statements (between successive statement delimiters)
+            while parser.consume_token(&Token::SemiColon) {
+                expecting_statement_delimiter = false;
+            }
+
+            if parser.peek_token() == Token::EOF {
+                break;
+            }
+            if expecting_statement_delimiter {
+                println!("end of statement {}", parser.peek_token());
+                exit(1);
+            }
+
+            let statement = parser
+                .parse_statement()
+                .map_err(|e| PSqlError::ParseError(e))?;
+            stmts.push(statement);
+            expecting_statement_delimiter = true;
+        }
+        Ok(stmts)
     }
 }
