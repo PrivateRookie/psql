@@ -11,6 +11,10 @@ use nom::{
     sequence::{pair, preceded, terminated, tuple},
     IResult,
 };
+use openapiv3::{
+    ArrayType, NumberType, Parameter, ParameterData, ParameterSchemaOrContent, ReferenceOr, Schema,
+    SchemaData, SchemaKind, StringType, Type,
+};
 use sqlparser::{
     dialect::Dialect,
     tokenizer::{Token, Whitespace},
@@ -118,6 +122,19 @@ impl ToString for InnerTy {
     }
 }
 
+impl InnerTy {
+    fn to_openapi_schema_kind(&self) -> SchemaKind {
+        match self {
+            InnerTy::Str => SchemaKind::Type(Type::String(StringType::default())),
+            InnerTy::Num => SchemaKind::Type(Type::Number(NumberType::default())),
+            InnerTy::Raw => SchemaKind::Type(Type::String(StringType {
+                pattern: Some("^#.*#$".to_string()),
+                ..Default::default()
+            })),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParamTy {
     Basic(InnerTy),
@@ -133,12 +150,49 @@ impl ToString for ParamTy {
     }
 }
 
+/// PSQL parameter
 #[derive(Debug, PartialEq)]
 pub struct Param {
     pub name: String,
     pub ty: ParamTy,
     pub default: Option<ParamValue>,
     pub help: String,
+}
+
+impl Param {
+    pub fn to_openapi_param(&self) -> Parameter {
+        let schema_kind = match &self.ty {
+            ParamTy::Basic(inner_ty) => inner_ty.to_openapi_schema_kind(),
+            ParamTy::Array(inner_ty) => SchemaKind::Type(Type::Array(ArrayType {
+                items: ReferenceOr::Item(Box::new(Schema {
+                    schema_kind: inner_ty.to_openapi_schema_kind(),
+                    schema_data: Default::default(),
+                })),
+                min_items: None,
+                max_items: None,
+                unique_items: false,
+            })),
+        };
+        Parameter::Query {
+            parameter_data: ParameterData {
+                name: self.name.clone(),
+                description: Some(self.help.clone()),
+                required: self.default.is_none(),
+                deprecated: None,
+                format: ParameterSchemaOrContent::Schema(ReferenceOr::Item(Schema {
+                    schema_data: SchemaData::default(),
+                    schema_kind,
+                })),
+                example: None,
+                examples: Default::default(),
+                explode: None,
+                extensions: Default::default(),
+            },
+            allow_reserved: false,
+            style: Default::default(),
+            allow_empty_value: None,
+        }
+    }
 }
 
 fn double_quote_str<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
@@ -532,6 +586,13 @@ impl Program {
         opts
     }
 
+    /// generate open api doc parameters
+    pub fn generate_openapi(&self) -> Vec<ReferenceOr<Parameter>> {
+        self.params
+            .iter()
+            .map(|p| ReferenceOr::Item(p.to_openapi_param()))
+            .collect()
+    }
     /// read from args
     // TODO replace exit with result
     pub fn get_matches(
