@@ -5,6 +5,7 @@ use nom::{
     character::complete::{alpha1, alphanumeric1, char},
     combinator::{map, opt, recognize},
     error::context,
+    error::{ContextError as NomContextError, ParseError as NomParseError},
     multi::{many0, separated_list0},
     number::complete::double as nom_double,
     sequence::{pair, preceded, terminated, tuple},
@@ -75,30 +76,32 @@ impl ParamValue {
     /// parse from arg string
     ///
     /// **NOTE** string parsed from arg isn't wrapped with `'` or `"`
-    pub fn from_arg_str(ty: &InnerTy, arg_str: &str) -> Result<Self, String> {
+    pub fn from_arg_str(ty: &InnerTy, arg_str: &str) -> Result<Self, PSqlError> {
         match ty {
             InnerTy::Str => Ok(ParamValue::Str(arg_str.to_string())),
             InnerTy::Num => {
-                let (remain, val) = double(arg_str).map_err(|e| e.to_string())?;
+                let (remain, val) = double::<nom::error::VerboseError<&str>>(arg_str)
+                    .map_err(|e| PSqlError::ParamParseError(e.to_string()))?;
                 if remain.is_empty() {
                     Ok(val)
                 } else {
-                    Err(format!("invalid double value {}", arg_str))
+                    Err(PSqlError::InvalidArgValue(arg_str.to_string(), ty.clone()))
                 }
             }
             InnerTy::Raw => {
-                let (remain, val) = raw(arg_str).map_err(|e| e.to_string())?;
+                let (remain, val) = raw::<nom::error::VerboseError<&str>>(arg_str)
+                    .map_err(|e| PSqlError::ParamParseError(e.to_string()))?;
                 if remain.is_empty() {
                     Ok(val)
                 } else {
-                    Err(format!("invalid raw val {}", arg_str))
+                    Err(PSqlError::InvalidArgValue(arg_str.to_string(), ty.clone()))
                 }
             }
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InnerTy {
     Str,
     Num,
@@ -138,7 +141,9 @@ pub struct Param {
     pub help: String,
 }
 
-fn double_quote_str(input: &str) -> IResult<&str, &str> {
+fn double_quote_str<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, &'a str, E> {
     let not_quote_slash = is_not("\"\\");
     context(
         "double quote str",
@@ -149,7 +154,9 @@ fn double_quote_str(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
-fn single_quote_str(input: &str) -> IResult<&str, &str> {
+fn single_quote_str<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, &'a str, E> {
     let not_quote_slash = is_not("'\\");
     context(
         "single quote str",
@@ -160,7 +167,9 @@ fn single_quote_str(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
-fn str(input: &str) -> IResult<&str, ParamValue> {
+fn str<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, ParamValue, E> {
     context(
         "str",
         map(alt((single_quote_str, double_quote_str)), |val: &str| {
@@ -169,11 +178,15 @@ fn str(input: &str) -> IResult<&str, ParamValue> {
     )(input)
 }
 
-fn double(input: &str) -> IResult<&str, ParamValue> {
+fn double<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&str, ParamValue, E> {
     context("double", map(nom_double, |val| ParamValue::Num(val)))(input)
 }
 
-fn raw(input: &str) -> IResult<&str, ParamValue> {
+fn raw<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&str, ParamValue, E> {
     let not_quote_slash = is_not("#\\");
     context(
         "raw val",
@@ -184,16 +197,21 @@ fn raw(input: &str) -> IResult<&str, ParamValue> {
     )(input)
 }
 
-fn basic_val(input: &str) -> IResult<&str, ParamValue> {
-    alt((str, raw, double))(input)
-}
-
-fn no_newline_sp(input: &str) -> IResult<&str, &str> {
+fn no_newline_sp<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&str, &str, E> {
     let chars = " \t";
     take_while(move |c| chars.contains(c))(input)
 }
 
-fn parse_array(input: &str) -> IResult<&str, ParamValue> {
+fn parse_array<
+    'a,
+    E: NomParseError<&'a str> + NomContextError<&'a str>,
+    F: nom::Parser<&'a str, ParamValue, E>,
+>(
+    input: &'a str,
+    f: F,
+) -> IResult<&str, ParamValue, E> {
     // TODO should check type consistent
     context(
         "array",
@@ -201,7 +219,7 @@ fn parse_array(input: &str) -> IResult<&str, ParamValue> {
             preceded(
                 tuple((tag("["), no_newline_sp)),
                 terminated(
-                    separated_list0(tuple((no_newline_sp, tag(","), no_newline_sp)), basic_val),
+                    separated_list0(tuple((no_newline_sp, tag(","), no_newline_sp)), f),
                     tuple((no_newline_sp, tag("]"))),
                 ),
             ),
@@ -210,11 +228,15 @@ fn parse_array(input: &str) -> IResult<&str, ParamValue> {
     )(input)
 }
 
-fn parse_default(input: &str) -> IResult<&str, ParamValue> {
-    alt((parse_array, basic_val))(input)
-}
+// fn parse_default<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+//     input: &'a str,
+// ) -> IResult<&str, ParamValue, E> {
+//     alt((parse_array, basic_val))(input)
+// }
 
-fn identifier(input: &str) -> IResult<&str, String> {
+fn identifier<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&str, String, E> {
     context(
         "identifier",
         map(
@@ -227,7 +249,9 @@ fn identifier(input: &str) -> IResult<&str, String> {
     )(input)
 }
 
-fn basic_ty(input: &str) -> IResult<&str, InnerTy> {
+fn basic_ty<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&str, InnerTy, E> {
     context(
         "basic ty",
         alt((
@@ -238,7 +262,9 @@ fn basic_ty(input: &str) -> IResult<&str, InnerTy> {
     )(input)
 }
 
-fn parse_ty(input: &str) -> IResult<&str, ParamTy> {
+fn parse_ty<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&str, ParamTy, E> {
     alt((
         context(
             "array ty",
@@ -257,8 +283,37 @@ fn parse_ty(input: &str) -> IResult<&str, ParamTy> {
     ))(input)
 }
 
+fn parse_default<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+    ty: &ParamTy,
+) -> IResult<&'a str, ParamValue, E> {
+    match &ty {
+        ParamTy::Basic(inner_ty) => match inner_ty {
+            InnerTy::Str => str(input),
+            InnerTy::Num => double(input),
+            InnerTy::Raw => raw(input),
+        },
+        ParamTy::Array(inner_ty) => match inner_ty {
+            InnerTy::Str => parse_array(input, str),
+            InnerTy::Num => parse_array(input, double),
+            InnerTy::Raw => parse_array(input, raw),
+        },
+    }
+}
+
+fn take_eq<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, (), E> {
+    map(
+        recognize(tuple((no_newline_sp, tag("="), no_newline_sp))),
+        |_| (),
+    )(input)
+}
+
 /// parse param line
-fn param(input: &str) -> IResult<&str, Param> {
+fn param<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Param, E> {
     let (input, (name, ty)) = map(
         tuple((
             tag("?"),
@@ -271,13 +326,13 @@ fn param(input: &str) -> IResult<&str, Param> {
         )),
         |(_, _, name, _, _, _, ty)| (name, ty),
     )(input)?;
-    let (input, default) = context(
-        "default",
-        opt(map(
-            tuple((no_newline_sp, tag("="), no_newline_sp, parse_default)),
-            |(_, _, _, default)| default,
-        )),
-    )(input)?;
+    let (input, default) = match take_eq::<nom::error::VerboseError<&str>>(input) {
+        Ok((input, _)) => {
+            let (input, default) = parse_default(input, &ty)?;
+            (input, Some(default))
+        }
+        Err(_) => (input, None),
+    };
     let (input, help) = context(
         "help",
         opt(map(
@@ -317,9 +372,16 @@ fn parse_param() {
         ("no default", "? age: num // help msg"),
         ("no help msg", "? age: num = 10"),
         ("simple", "? age: num"),
+        ("invalid num", "? age: num = gx"),
+        ("invalid num", "? age: num = "),
     ];
     for (name, input) in cases.iter() {
-        println!("[{}] {} -> {:?}", name, input, param(input));
+        println!(
+            "[{}] {} -> {:?}",
+            name,
+            input,
+            param::<nom::error::VerboseError<&str>>(input)
+        );
     }
 }
 
@@ -357,7 +419,9 @@ impl Program {
                 }
                 Token::Whitespace(ws) => match ws {
                     Whitespace::SingleLineComment { comment, prefix } => {
-                        if let Ok((_, param)) = param(&comment) {
+                        if comment.starts_with("?") {
+                            let (_, param) = param::<nom::error::VerboseError<&str>>(&comment)
+                                .map_err(|e| PSqlError::ParamParseError(format!("{:#?}", e)))?;
                             params.push(param);
                         } else {
                             processed.push(VariableToken::Normal(Token::Whitespace(

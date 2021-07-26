@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use sqlparser::tokenizer::Token;
 use thiserror::Error;
 
+use crate::parser::InnerTy;
+
 #[derive(Debug, Error)]
 pub enum PSqlError {
     #[error("invalid variable, expect identifier, found {0}")]
@@ -17,4 +19,8 @@ pub enum PSqlError {
     MissingContextValue(String),
     #[error("{0}")]
     ParseError(sqlparser::parser::ParserError),
+    #[error("param line parse error {0}")]
+    ParamParseError(String),
+    #[error("invalid arg value {0} for {1:?}")]
+    InvalidArgValue(String, InnerTy),
 }
