@@ -10,7 +10,7 @@ thiserror = "1"
 nom = "6"
 sqlparser = "0.9"
 getopts = "*"
-
-# should be options dep ?
 log = "0.4"
+
+[dev-dependencies]
 pretty_env_logger = "0.4"
