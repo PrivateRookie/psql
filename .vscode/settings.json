@@ -1,10 +1,16 @@
 {
-    "cSpell.words": [
-        "getopts",
-        "ocrs",
-        "optmulti",
-        "optopt",
-        "reqopt",
-        "vals"
-    ]
+  "cSpell.words": [
+    "getopts",
+    "ocrs",
+    "openapi",
+    "openapiv",
+    "optmulti",
+    "optopt",
+    "reqopt",
+    "vals"
+  ],
+  "evenBetterToml.schema.associations": {
+    "examples/plan.toml": "file://./examples/schema.json",
+    "^(.*(/|\\\\)\\.?taplo\\.toml|\\.?taplo\\.toml)$": "taplo://taplo.toml"
+  }
 }

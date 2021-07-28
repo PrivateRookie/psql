@@ -1,0 +1,15 @@
+title = 'PSQL http api demo'
+description = 'A PSQL http api config example'
+
+[contact]
+name = "PrivateRookie"
+url = "https://github.com/PrivateRookie"
+mail = "996514515@qq.com"
+
+[conns]
+demo = "mysql://root:1234TttT@nuc:3306/default"
+
+[queries.demo]
+conn = "demo"
+sql = "./examples/demo.sql"
+path = "student"
