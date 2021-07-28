@@ -1,5 +1,7 @@
 use indexmap::IndexMap;
-use openapiv3::{Contact, Info, OpenAPI, Operation, PathItem, ReferenceOr, Server};
+use openapiv3::{
+    Contact, Info, OpenAPI, Operation, PathItem, ReferenceOr, Response, Responses, Server,
+};
 use psql::parser::Program;
 use sqlparser::dialect::MySqlDialect;
 
@@ -37,6 +39,14 @@ fn main() {
     let get_op = Operation {
         summary: Some("psql openapi demo".to_string()),
         parameters: prog.generate_openapi(),
+        responses: Responses {
+            default: Some(ReferenceOr::Item(Response {
+                description: "default response".to_string(),
+                headers: IndexMap::default(),
+                ..Default::default()
+            })),
+            responses: Default::default(),
+        },
         ..Default::default()
     };
 
