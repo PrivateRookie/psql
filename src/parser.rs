@@ -52,7 +52,7 @@ impl ToString for ParamValue {
 }
 
 impl ParamValue {
-    pub fn to_token<D: Dialect>(self, dialect: &D) -> Vec<Token> {
+    pub fn into_token<D: Dialect>(self, dialect: &D) -> Vec<Token> {
         match self {
             ParamValue::Str(val) => vec![Token::SingleQuotedString(val)],
             ParamValue::Num(val) => vec![Token::Number(val.to_string(), false)],
@@ -60,11 +60,10 @@ impl ParamValue {
                 .tokenize()
                 .unwrap(),
             ParamValue::Array(val) => {
-                let mut tokens = vec![];
-                tokens.push(Token::LParen);
+                let mut tokens = vec![Token::LParen];
                 let length = val.len();
                 for (idx, item) in val.into_iter().enumerate() {
-                    tokens.extend(item.to_token(dialect));
+                    tokens.extend(item.into_token(dialect));
                     if idx + 1 != length {
                         tokens.push(Token::Comma);
                     }
@@ -232,7 +231,7 @@ fn str<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
 fn double<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&str, ParamValue, E> {
-    context("double", map(nom_double, |val| ParamValue::Num(val)))(input)
+    context("double", map(nom_double, ParamValue::Num))(input)
 }
 
 fn raw<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
@@ -273,7 +272,7 @@ fn parse_array<
                     tuple((no_newline_sp, tag("]"))),
                 ),
             ),
-            |val| ParamValue::Array(val),
+            ParamValue::Array,
         ),
     )(input)
 }
@@ -323,7 +322,7 @@ fn parse_ty<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
                 ),
             ),
         ),
-        map(basic_ty, |ty| ParamTy::Basic(ty)),
+        map(basic_ty, ParamTy::Basic),
     ))(input)
 }
 
@@ -440,7 +439,7 @@ impl Program {
     pub fn parse(dialect: &impl Dialect, program: &str) -> Result<Program, PSqlError> {
         let tokens = sqlparser::tokenizer::Tokenizer::new(dialect, program)
             .tokenize()
-            .map_err(|e| PSqlError::TokenizeError(e))?;
+            .map_err(PSqlError::TokenizeError)?;
         let mut processed = vec![];
         let mut params = vec![];
         let mut expect_word = false;
@@ -463,7 +462,7 @@ impl Program {
                 }
                 Token::Whitespace(ws) => match ws {
                     Whitespace::SingleLineComment { comment, prefix } => {
-                        if comment.starts_with("?") {
+                        if comment.starts_with('?') {
                             let (_, param) = param::<nom::error::VerboseError<&str>>(&comment)
                                 .map_err(|e| PSqlError::ParamParseError(format!("{:#?}", e)))?;
                             params.push(param);
@@ -485,10 +484,7 @@ impl Program {
             }
         }
         // validation check
-        let param_names_vec = params
-            .iter()
-            .map(|p| p.name.clone())
-            .collect::<Vec<String>>();
+        let param_names_vec = params.iter().map(|p| p.name.clone());
         // 1. check duplication
         let mut param_names = HashSet::new();
         for p in param_names_vec.into_iter() {
@@ -503,18 +499,12 @@ impl Program {
             }
         }
         // 2. check missing arguments
-        let missing: HashSet<String> = var_names
-            .difference(&param_names)
-            .map(|v| v.clone())
-            .collect();
+        let missing: HashSet<String> = var_names.difference(&param_names).cloned().collect();
         if !missing.is_empty() {
             return Err(PSqlError::MissingParams(missing));
         }
         // 3. check used arguments
-        let unused: HashSet<String> = param_names
-            .difference(&var_names)
-            .map(|v| v.clone())
-            .collect();
+        let unused: HashSet<String> = param_names.difference(&var_names).cloned().collect();
         if !unused.is_empty() {
             return Err(PSqlError::UnusedParams(unused));
         }
@@ -675,7 +665,7 @@ impl Program {
             match t {
                 VariableToken::Var(var) => {
                     if let Some(val) = context.get(var) {
-                        transformed.extend(val.clone().to_token(dialect))
+                        transformed.extend(val.clone().into_token(dialect))
                     } else {
                         return Err(PSqlError::MissingContextValue(var.clone()));
                     }
@@ -706,9 +696,7 @@ impl Program {
                 return Err(PSqlError::ExpectEndOfStatement(parser.peek_token()));
             }
 
-            let statement = parser
-                .parse_statement()
-                .map_err(|e| PSqlError::ParseError(e))?;
+            let statement = parser.parse_statement().map_err(PSqlError::ParseError)?;
             stmts.push(statement);
             expecting_statement_delimiter = true;
         }
