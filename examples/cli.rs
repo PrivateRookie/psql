@@ -12,7 +12,7 @@ select name from t where age=@age and name like @pattern and addr in @addrs and 
 ";
     pretty_env_logger::init();
     let dialect = MySqlDialect {};
-    let prog = Program::tokenize(&dialect, sql).unwrap();
+    let prog = Program::parse(&dialect, sql).unwrap();
     let opts = prog.generate_options();
     match prog.get_matches(&opts) {
         Ok(values) => match prog.render(&dialect, &values) {

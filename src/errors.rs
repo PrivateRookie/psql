@@ -23,4 +23,8 @@ pub enum PSqlError {
     ParamParseError(String),
     #[error("invalid arg value {0} for {1:?}")]
     InvalidArgValue(String, InnerTy),
+    #[error("{0:?}")]
+    TokenizeError(sqlparser::tokenizer::TokenizerError),
+    #[error("expect end of statement, got {0:?}")]
+    ExpectEndOfStatement(Token),
 }

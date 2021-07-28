@@ -32,6 +32,25 @@ pub enum ParamValue {
     Array(Vec<ParamValue>),
 }
 
+impl ToString for ParamValue {
+    fn to_string(&self) -> String {
+        match self {
+            ParamValue::Str(str) => format!("'{}'", str),
+            ParamValue::Num(num) => num.to_string(),
+            ParamValue::Raw(raw) => raw.clone(),
+            ParamValue::Array(arr) => {
+                format!(
+                    "({})",
+                    arr.iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
 impl ParamValue {
     pub fn to_token<D: Dialect>(self, dialect: &D) -> Vec<Token> {
         match self {
@@ -55,28 +74,6 @@ impl ParamValue {
             }
         }
     }
-}
-
-impl ToString for ParamValue {
-    fn to_string(&self) -> String {
-        match self {
-            ParamValue::Str(str) => format!("'{}'", str),
-            ParamValue::Num(num) => num.to_string(),
-            ParamValue::Raw(raw) => raw.clone(),
-            ParamValue::Array(arr) => {
-                format!(
-                    "({})",
-                    arr.iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                )
-            }
-        }
-    }
-}
-
-impl ParamValue {
     /// parse from arg string
     ///
     /// **NOTE** string parsed from arg isn't wrapped with `'` or `"`
@@ -266,7 +263,6 @@ fn parse_array<
     input: &'a str,
     f: F,
 ) -> IResult<&str, ParamValue, E> {
-    // TODO should check type consistent
     context(
         "array",
         map(
@@ -281,12 +277,6 @@ fn parse_array<
         ),
     )(input)
 }
-
-// fn parse_default<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
-//     input: &'a str,
-// ) -> IResult<&str, ParamValue, E> {
-//     alt((parse_array, basic_val))(input)
-// }
 
 fn identifier<'a, E: NomParseError<&'a str> + NomContextError<&'a str>>(
     input: &'a str,
@@ -447,10 +437,10 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn tokenize(dialect: &impl Dialect, program: &str) -> Result<Program, PSqlError> {
+    pub fn parse(dialect: &impl Dialect, program: &str) -> Result<Program, PSqlError> {
         let tokens = sqlparser::tokenizer::Tokenizer::new(dialect, program)
             .tokenize()
-            .unwrap();
+            .map_err(|e| PSqlError::TokenizeError(e))?;
         let mut processed = vec![];
         let mut params = vec![];
         let mut expect_word = false;
@@ -534,6 +524,7 @@ impl Program {
         })
     }
 
+    /// generate command line options
     pub fn generate_options(&self) -> getopts::Options {
         let mut opts = getopts::Options::new();
         opts.optflag("h", "help", "print usage message");
@@ -593,8 +584,8 @@ impl Program {
             .map(|p| ReferenceOr::Item(p.to_openapi_param()))
             .collect()
     }
+
     /// read from args
-    // TODO replace exit with result
     pub fn get_matches(
         &self,
         opts: &getopts::Options,
@@ -670,6 +661,10 @@ impl Program {
         }
     }
 
+    /// take parameter values and return parsed sql statement
+    ///
+    /// **NOTE** this method don't handle parameter wih default value
+    /// so you should pass default value in context
     pub fn render<D: Dialect>(
         &self,
         dialect: &D,
@@ -708,8 +703,7 @@ impl Program {
                 break;
             }
             if expecting_statement_delimiter {
-                println!("end of statement {}", parser.peek_token());
-                exit(1);
+                return Err(PSqlError::ExpectEndOfStatement(parser.peek_token()));
             }
 
             let statement = parser

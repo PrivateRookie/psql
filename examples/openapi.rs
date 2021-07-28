@@ -13,7 +13,7 @@ fn main() {
     ";
     pretty_env_logger::init();
     let dialect = MySqlDialect {};
-    let prog = Program::tokenize(&dialect, sql).unwrap();
+    let prog = Program::parse(&dialect, sql).unwrap();
     let openapi = "3.0.3".to_string();
     let info = Info {
         title: "PSQL openapiv3".to_string(),
