@@ -12,5 +12,9 @@
   "evenBetterToml.schema.associations": {
     "examples/plan.toml": "file://./examples/schema.json",
     "^(.*(/|\\\\)\\.?taplo\\.toml|\\.?taplo\\.toml)$": "taplo://taplo.toml"
-  }
+  },
+  "rest-client.excludeHostsForProxy": [
+    "nuc",
+    "localhost"
+  ]
 }

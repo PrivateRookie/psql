@@ -1,5 +1,9 @@
 use openapiv3::{OpenAPI, PathItem, ReferenceOr};
-use psql::{errors::PSqlError, parser::Program};
+use psql::{
+    errors::PSqlError,
+    parser::{ParamValue, Program},
+};
+use querystring::querify;
 use schemars::{schema_for, JsonSchema};
 use sqlparser::dialect::MySqlDialect;
 use std::{
@@ -148,13 +152,100 @@ pub struct QueryWithProg {
     pub prog: Program,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiMsg {
+    pub msg: String,
+    pub code: u16,
+}
+
 async fn run_http(plan: Plan, doc: OpenAPI) -> Result<(), ()> {
     use warp::Filter;
     async fn serve_doc(doc: OpenAPI) -> Result<impl warp::Reply, Infallible> {
         Ok(warp::reply::json(&doc))
     }
     async fn serve_query(qs: String, prog: Program) -> Result<impl warp::Reply, Infallible> {
-        Ok(qs)
+        let qs_pairs = querify(&qs);
+        let mut context: HashMap<String, ParamValue> = HashMap::new();
+        for p in prog.params.iter() {
+            let found = qs_pairs
+                .iter()
+                .filter(|(k, _)| *k == p.name)
+                .collect::<Vec<&(&str, &str)>>();
+            match (found.is_empty(), p.default.clone()) {
+                (true, None) => {
+                    let code = warp::http::StatusCode::BAD_REQUEST;
+                    let msg = ApiMsg {
+                        msg: format!("{} is required", p.name),
+                        code: code.as_u16(),
+                    };
+                    return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
+                }
+                (true, Some(default)) => {
+                    context.insert(p.name.clone(), default);
+                }
+                (false, _) => match &p.ty {
+                    psql::parser::ParamTy::Basic(inner_ty) => {
+                        if found.len() > 1 {
+                            let code = warp::http::StatusCode::BAD_REQUEST;
+                            let msg = ApiMsg {
+                                msg: format!("{} expect single value, got {}", p.name, found.len()),
+                                code: code.as_u16(),
+                            };
+                            return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
+                        }
+                        let raw_value = found.first().unwrap().1;
+                        match ParamValue::from_arg_str(inner_ty, raw_value) {
+                            Err(_) => {
+                                let code = warp::http::StatusCode::BAD_REQUEST;
+                                let msg = ApiMsg {
+                                    msg: format!(
+                                        "invalid value `{}` for {:?}",
+                                        raw_value, inner_ty
+                                    ),
+                                    code: code.as_u16(),
+                                };
+                                return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
+                            }
+                            Ok(val) => {
+                                context.insert(p.name.clone(), val);
+                            }
+                        }
+                    }
+                    psql::parser::ParamTy::Array(inner_ty) => {
+                        let mut parsed = vec![];
+                        for (_, raw) in found {
+                            match ParamValue::from_arg_str(inner_ty, raw) {
+                                Ok(val) => parsed.push(val),
+                                Err(_) => {
+                                    let code = warp::http::StatusCode::BAD_REQUEST;
+                                    let msg = ApiMsg {
+                                        msg: format!("invalid value `{}` for {:?}", raw, inner_ty),
+                                        code: code.as_u16(),
+                                    };
+                                    return Ok(warp::reply::with_status(
+                                        warp::reply::json(&msg),
+                                        code,
+                                    ));
+                                }
+                            }
+                        }
+                        context.insert(p.name.clone(), ParamValue::Array(parsed));
+                    }
+                },
+            }
+        }
+        let renderd: String = prog
+            .render(&MySqlDialect {}, &context)
+            .unwrap()
+            .iter()
+            .map(|stmt| stmt.to_string())
+            .collect();
+        let code = warp::http::StatusCode::OK;
+        let msg = ApiMsg {
+            msg: renderd,
+            code: code.as_u16(),
+        };
+        Ok(warp::reply::with_status(warp::reply::json(&msg), code))
     }
     async fn index() -> Result<impl warp::Reply, Infallible> {
         Ok("<h1>hello</h1>".to_string())
@@ -204,4 +295,9 @@ async fn main() -> Result<(), ()> {
         std::process::exit(0);
     }
     run_http(plan, doc).await
+}
+
+#[test]
+fn test_qs() {
+    dbg!(querystring::querify("foo=bar&baz=qux&foo=123"));
 }
