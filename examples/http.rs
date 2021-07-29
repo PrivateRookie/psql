@@ -4,6 +4,7 @@ use schemars::{schema_for, JsonSchema};
 use sqlparser::dialect::MySqlDialect;
 use std::{
     collections::HashMap,
+    convert::Infallible,
     fs::File,
     io::Read,
     net::{SocketAddr, ToSocketAddrs},
@@ -141,16 +142,66 @@ impl Query {
     }
 }
 
-fn main() {
+#[derive(Debug, Clone)]
+pub struct QueryWithProg {
+    pub query: Query,
+    pub prog: Program,
+}
+
+async fn run_http(plan: Plan, doc: OpenAPI) -> Result<(), ()> {
+    use warp::Filter;
+    async fn serve_doc(doc: OpenAPI) -> Result<impl warp::Reply, Infallible> {
+        Ok(warp::reply::json(&doc))
+    }
+    async fn serve_query(qs: String, prog: Program) -> Result<impl warp::Reply, Infallible> {
+        Ok(qs)
+    }
+    async fn index() -> Result<impl warp::Reply, Infallible> {
+        Ok("<h1>hello</h1>".to_string())
+    }
+    let doc_route = warp::get()
+        .and(warp::path("doc"))
+        .and(warp::any().map(move || doc.clone()))
+        .and_then(serve_doc);
+    let index = warp::get().and(warp::path("index")).and_then(index);
+    let queries = plan.queries.clone();
+    let api_routes = queries
+        .into_iter()
+        .map(|(name, query)| {
+            let prog = query.read_sql().unwrap();
+            warp::get()
+                .and(warp::path(plan.prefix.clone()))
+                .and(warp::path(name))
+                .and(warp::query::raw())
+                .and(warp::any().map(move || prog.clone()))
+                .and_then(serve_query)
+                .boxed()
+        })
+        .reduce(|pre, next| pre.or(next).unify().boxed())
+        .unwrap();
+
+    let addr = plan.address.first().unwrap();
+    warp::serve(index.or(doc_route).or(api_routes))
+        .run((addr.ip(), addr.port()))
+        .await;
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), ()> {
     use std::env::args;
+
+    pretty_env_logger::init();
+    let plan_str = include_str!("plan.toml");
+    let plan: Plan = toml::from_str(&plan_str).unwrap();
+    let doc = plan.openapi_doc();
     if args().any(|arg| arg == "-s") {
         let schema = schema_for!(Plan);
         println!("{}", serde_json::to_string_pretty(&schema).unwrap());
         std::process::exit(0);
     } else if args().any(|arg| arg == "-o") {
-        let plan_str = include_str!("plan.toml");
-        let plan: Plan = toml::from_str(&plan_str).unwrap();
-        let doc = plan.openapi_doc();
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        std::process::exit(0);
     }
+    run_http(plan, doc).await
 }

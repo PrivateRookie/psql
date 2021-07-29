@@ -131,7 +131,7 @@ impl InnerTy {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ParamTy {
     Basic(InnerTy),
     Array(InnerTy),
@@ -147,7 +147,7 @@ impl ToString for ParamTy {
 }
 
 /// PSQL parameter
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Param {
     pub name: String,
     pub ty: ParamTy,
@@ -429,7 +429,7 @@ fn parse_param() {
 }
 
 /// a sql file, may contains multi statements
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Program {
     pub params: Vec<Param>,
     pub tokens: Vec<VariableToken>,

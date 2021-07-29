@@ -22,3 +22,5 @@ toml = "0.5"
 warp = "0.3"
 schemars = { version = "0.8", features = ["preserve_order"] }
 sqlx = { version = "*", features = ["mysql", "runtime-tokio-rustls"] }
+querystring = "1"
+tokio = { version = "1", features = ["full"] }
