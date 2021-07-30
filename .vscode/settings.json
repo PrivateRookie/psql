@@ -1,12 +1,17 @@
 {
   "cSpell.words": [
     "getopts",
+    "indexmap",
     "ocrs",
     "openapi",
     "openapiv",
     "optmulti",
     "optopt",
+    "querify",
+    "querystring",
     "reqopt",
+    "schemars",
+    "sqlparser",
     "vals"
   ],
   "evenBetterToml.schema.associations": {
