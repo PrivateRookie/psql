@@ -8,7 +8,7 @@ url = "https://github.com/PrivateRookie"
 mail = "996514515@qq.com"
 
 [conns]
-demo = "mysql://root:1234TttT@nuc:3306/default"
+demo = "mysql://root:1234TttT@wsl.com:3306/default"
 
 [queries.demo]
 conn = "demo"

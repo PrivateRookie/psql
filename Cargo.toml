@@ -12,15 +12,18 @@ sqlparser = "0.9"
 getopts = "*"
 log = "0.4"
 openapiv3 = "0.5"
-
-[dev-dependencies]
-pretty_env_logger = "0.4"
-indexmap = "1.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.5"
-warp = "0.3"
-schemars = { version = "0.8", features = ["preserve_order"] }
-sqlx = { version = "*", features = ["mysql", "runtime-tokio-rustls"] }
+indexmap = "1.6"
 querystring = "1"
+warp = "0.3"
+sqlx = { version = "*", features = ["mysql", "runtime-tokio-rustls", "all-types", "bigdecimal"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
+chrono = "0.4"
+base64 = "0.13"
+bigdecimal = "0.2"
+
+[dev-dependencies]
+pretty_env_logger = "0.4"
 tokio = { version = "1", features = ["full"] }
