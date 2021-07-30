@@ -18,11 +18,17 @@ toml = "0.5"
 indexmap = "1.6"
 querystring = "1"
 warp = "0.3"
-sqlx = { version = "*", features = ["mysql", "runtime-tokio-rustls", "all-types", "bigdecimal"] }
+sqlx = { version = "*", features = [
+    "mysql",
+    "runtime-tokio-rustls",
+    "all-types",
+    "bigdecimal",
+] }
 schemars = { version = "0.8", features = ["preserve_order"] }
 chrono = "0.4"
 base64 = "0.13"
 bigdecimal = "0.2"
+urlencoding = "2"
 
 [dev-dependencies]
 pretty_env_logger = "0.4"

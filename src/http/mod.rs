@@ -31,7 +31,8 @@ pub async fn run_http(
         prog: Program,
         pool: sqlx::MySqlPool,
     ) -> Result<impl warp::Reply, Infallible> {
-        let qs_pairs = querify(&qs);
+        let decoded = urlencoding::decode(&qs).unwrap();
+        let qs_pairs = querify(&decoded);
         let mut context: HashMap<String, ParamValue> = HashMap::new();
         for p in prog.params.iter() {
             let found = qs_pairs
@@ -133,13 +134,17 @@ pub async fn run_http(
     let prefix = plan.prefix.clone();
     let api_routes = queries
         .into_iter()
-        .map(move |(name, query)| {
-            let pool = conns.get(&name).map(|p| p.clone()).unwrap();
+        .map(move |(_name, query)| {
+            let pool = conns.get(&query.conn).map(|p| p.clone()).unwrap();
             let prog = query.read_sql().unwrap();
             warp::get()
                 .and(warp::path(prefix.clone()))
                 .and(warp::path(query.path))
-                .and(warp::query::raw())
+                .and(
+                    warp::query::raw()
+                        .or(warp::any().map(|| String::new()))
+                        .unify(),
+                )
                 .and(warp::any().map(move || prog.clone()))
                 .and(warp::any().map(move || pool.clone()))
                 .and_then(serve_query)

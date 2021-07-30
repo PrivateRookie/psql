@@ -93,7 +93,7 @@ impl Plan {
             ..Default::default()
         };
         let server = openapiv3::Server {
-            url: self.prefix.clone(),
+            url: format!("/{}", self.prefix),
             ..Default::default()
         };
         let mut paths = IndexMap::new();

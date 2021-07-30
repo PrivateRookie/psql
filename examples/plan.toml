@@ -8,9 +8,18 @@ url = "https://github.com/PrivateRookie"
 mail = "996514515@qq.com"
 
 [conns]
-demo = "mysql://root:1234TttT@wsl.com:3306/default"
+demo = "mysql://root:1234TttT@localhost:3306/default"
+info = "mysql://root:1234TttT@localhost:3306/information_schema"
 
 [queries.demo]
 conn = "demo"
+summary = "demo api"
 sql = "./examples/demo.sql"
 path = "student"
+
+[queries.tables]
+conn = "info"
+summary = "查询数据库中的表"
+sql = "./examples/tables.sql"
+path = "tables"
+
