@@ -17,7 +17,7 @@
     "vals"
   ],
   "evenBetterToml.schema.associations": {
-    "examples/plan.toml": "file://./examples/schema.json",
+    "plan.toml": "file://./schema.json",
     "^(.*(/|\\\\)\\.?taplo\\.toml|\\.?taplo\\.toml)$": "taplo://taplo.toml"
   },
   "rest-client.excludeHostsForProxy": [
