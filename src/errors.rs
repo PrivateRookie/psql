@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 use sqlparser::tokenizer::Token;
 use thiserror::Error;
@@ -27,4 +27,6 @@ pub enum PSqlError {
     TokenizeError(sqlparser::tokenizer::TokenizerError),
     #[error("expect end of statement, got {0:?}")]
     ExpectEndOfStatement(Token),
+    #[error("read sql file {0} failed {1}")]
+    ReadSQLError(PathBuf, String),
 }

@@ -1,10 +1,30 @@
 {
-    "cSpell.words": [
-        "getopts",
-        "ocrs",
-        "optmulti",
-        "optopt",
-        "reqopt",
-        "vals"
-    ]
+  "cSpell.words": [
+    "getopts",
+    "indexmap",
+    "ocrs",
+    "openapi",
+    "openapiv",
+    "optmulti",
+    "optopt",
+    "querify",
+    "querystring",
+    "reqopt",
+    "schemars",
+    "sqlparser",
+    "sqlx",
+    "urlencoding",
+    "vals"
+  ],
+  "evenBetterToml.schema.associations": {
+    "plan.toml": "file://./schema.json",
+    "^(.*(/|\\\\)\\.?taplo\\.toml|\\.?taplo\\.toml)$": "taplo://taplo.toml"
+  },
+  "rest-client.excludeHostsForProxy": [
+    "nuc",
+    "localhost"
+  ],
+  "rust-analyzer.cargo.features": [
+    "http"
+  ]
 }

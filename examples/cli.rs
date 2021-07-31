@@ -13,8 +13,9 @@ select name from t where age=@age and name like @pattern and addr in @addrs and 
     pretty_env_logger::init();
     let dialect = MySqlDialect {};
     let prog = Program::parse(&dialect, sql).unwrap();
-    let opts = prog.generate_options();
-    match prog.get_matches(&opts) {
+    let mut opts = getopts::Options::new();
+    prog.add_options(&mut opts);
+    match prog.get_matches(&opts, &std::env::args().collect()) {
         Ok(values) => match prog.render(&dialect, &values) {
             Ok(stmts) => {
                 println!(
