@@ -12,6 +12,8 @@
     "reqopt",
     "schemars",
     "sqlparser",
+    "sqlx",
+    "urlencoding",
     "vals"
   ],
   "evenBetterToml.schema.associations": {
@@ -21,5 +23,8 @@
   "rest-client.excludeHostsForProxy": [
     "nuc",
     "localhost"
+  ],
+  "rust-analyzer.cargo.features": [
+    "http"
   ]
 }

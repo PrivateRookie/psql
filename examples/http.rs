@@ -1,27 +1,65 @@
+use std::{fs::File, io::Read, path::PathBuf, process::exit};
+
 use psql::http::{run_http, Plan};
 use schemars::schema_for;
+use structopt::StructOpt;
+
+/// PSQL http service demo
+#[derive(Clone, StructOpt)]
+struct Args {
+    /// plan.toml file path
+    #[structopt(short, long, default_value = "plan.toml")]
+    plan: PathBuf,
+    /// print plan.toml json schema and exit
+    #[structopt(short, long)]
+    show_schema: bool,
+    /// print generated openapi json and exit
+    #[structopt(short = "o", long = "show_doc")]
+    show_openapi_doc: bool,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    use std::env::args;
-
     pretty_env_logger::init();
-    let plan_str = include_str!("plan.toml");
-    let plan: Plan = toml::from_str(&plan_str).unwrap();
-    let doc = plan.openapi_doc();
-    if args().any(|arg| arg == "-s") {
+    let args = Args::from_args();
+    if args.show_schema {
         let schema = schema_for!(Plan);
         println!("{}", serde_json::to_string_pretty(&schema).unwrap());
         std::process::exit(0);
-    } else if args().any(|arg| arg == "-o") {
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
-        std::process::exit(0);
     }
-    match plan.create_connections().await {
-        Ok(conns) => run_http(plan, doc, conns).await,
+    match File::open(&args.plan) {
+        Ok(mut file) => {
+            let mut content = String::new();
+            match file.read_to_string(&mut content) {
+                Ok(_) => match toml::from_str::<Plan>(&content) {
+                    Ok(plan) => {
+                        let doc = plan.openapi_doc();
+                        if args.show_openapi_doc {
+                            println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+                            std::process::exit(0);
+                        }
+                        match plan.create_connections().await {
+                            Ok(conns) => run_http(plan, doc, conns).await,
+                            Err(e) => {
+                                println!("{}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("invalid config file {:#?}", e);
+                        exit(1);
+                    }
+                },
+                Err(e) => {
+                    println!("{:#?}", e);
+                    exit(1);
+                }
+            }
+        }
         Err(e) => {
-            println!("{}", e);
-            std::process::exit(1);
+            println!("{:#}", e);
+            exit(1);
         }
     }
 }

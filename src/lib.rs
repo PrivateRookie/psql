@@ -1,4 +1,5 @@
-pub mod parser;
 pub mod errors;
-pub mod token;
+#[cfg(feature = "http")]
 pub mod http;
+pub mod parser;
+pub mod token;

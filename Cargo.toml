@@ -9,27 +9,53 @@ edition = "2018"
 thiserror = "1"
 nom = "6"
 sqlparser = "0.9"
-getopts = "*"
 log = "0.4"
-openapiv3 = "0.5"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.5"
-indexmap = "1.6"
-querystring = "1"
-warp = "0.3"
+
+# cli feature dep
+getopts = { version = "0.2", optional = true }
+
+# http feature dep
+openapiv3 = { version = "0.5", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+toml = { version = "0.5", optional = true }
+indexmap = { version = "1.6", optional = true }
+querystring = { version = "1", optional = true }
+warp = { version = "0.3", optional = true }
 sqlx = { version = "*", features = [
     "mysql",
     "runtime-tokio-rustls",
     "all-types",
     "bigdecimal",
-] }
-schemars = { version = "0.8", features = ["preserve_order"] }
-chrono = "0.4"
-base64 = "0.13"
-bigdecimal = "0.2"
-urlencoding = "2"
+], optional = true }
+schemars = { version = "0.8", features = ["preserve_order"], optional = true }
+chrono = { version = "0.4", optional = true }
+base64 = { version = "0.13", optional = true }
+bigdecimal = { version = "0.2", optional = true }
+urlencoding = { version = "2", optional = true }
+futures = { version = "0.3", optional = true }
+
+[features]
+http = [
+    "openapiv3",
+    "serde",
+    "serde_json",
+    "toml",
+    "indexmap",
+    "querystring",
+    "warp",
+    "sqlx",
+    "schemars",
+    "chrono",
+    "base64",
+    "bigdecimal",
+    "urlencoding",
+    "futures",
+]
+cli = ["getopts"]
+default = ["cli"]
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
 tokio = { version = "1", features = ["full"] }
+structopt = "0.3"

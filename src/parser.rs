@@ -11,6 +11,7 @@ use nom::{
     sequence::{pair, preceded, terminated, tuple},
     IResult,
 };
+#[cfg(feature = "http")]
 use openapiv3::{
     ArrayType, NumberType, Parameter, ParameterData, ParameterSchemaOrContent, ReferenceOr, Schema,
     SchemaData, SchemaKind, StringType, Type,
@@ -19,10 +20,7 @@ use sqlparser::{
     dialect::Dialect,
     tokenizer::{Token, Whitespace},
 };
-use std::{
-    collections::{HashMap, HashSet},
-    process::exit,
-};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParamValue {
@@ -118,6 +116,7 @@ impl ToString for InnerTy {
     }
 }
 
+#[cfg(feature = "http")]
 impl InnerTy {
     fn to_openapi_schema_kind(&self) -> SchemaKind {
         match self {
@@ -156,6 +155,7 @@ pub struct Param {
 }
 
 impl Param {
+    #[cfg(feature = "http")]
     pub fn to_openapi_param(&self) -> Parameter {
         let schema_kind = match &self.ty {
             ParamTy::Basic(inner_ty) => inner_ty.to_openapi_schema_kind(),
@@ -514,10 +514,74 @@ impl Program {
         })
     }
 
-    /// generate command line options
-    pub fn generate_options(&self) -> getopts::Options {
-        let mut opts = getopts::Options::new();
-        opts.optflag("h", "help", "print usage message");
+    /// take parameter values and return parsed sql statement
+    ///
+    /// **NOTE** this method don't handle parameter wih default value
+    /// so you should pass default value in context
+    pub fn render<D: Dialect>(
+        &self,
+        dialect: &D,
+        context: &HashMap<String, ParamValue>,
+    ) -> Result<Vec<sqlparser::ast::Statement>, PSqlError> {
+        let mut transformed = vec![];
+        for t in self.tokens.iter() {
+            match t {
+                VariableToken::Var(var) => {
+                    if let Some(val) = context.get(var) {
+                        transformed.extend(val.clone().into_token(dialect))
+                    } else {
+                        return Err(PSqlError::MissingContextValue(var.clone()));
+                    }
+                }
+                VariableToken::Normal(t) => transformed.push(t.clone()),
+            }
+        }
+        log::info!(
+            "{}",
+            transformed
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<String>()
+        );
+        let mut parser = sqlparser::parser::Parser::new(transformed, dialect);
+        let mut stmts = Vec::new();
+        let mut expecting_statement_delimiter = false;
+        loop {
+            // ignore empty statements (between successive statement delimiters)
+            while parser.consume_token(&Token::SemiColon) {
+                expecting_statement_delimiter = false;
+            }
+
+            if parser.peek_token() == Token::EOF {
+                break;
+            }
+            if expecting_statement_delimiter {
+                return Err(PSqlError::ExpectEndOfStatement(parser.peek_token()));
+            }
+
+            let statement = parser.parse_statement().map_err(PSqlError::ParseError)?;
+            stmts.push(statement);
+            expecting_statement_delimiter = true;
+        }
+        Ok(stmts)
+    }
+}
+
+#[cfg(feature = "http")]
+impl Program {
+    /// generate open api doc parameters
+    pub fn generate_openapi(&self) -> Vec<ReferenceOr<Parameter>> {
+        self.params
+            .iter()
+            .map(|p| ReferenceOr::Item(p.to_openapi_param()))
+            .collect()
+    }
+}
+
+#[cfg(feature = "cli")]
+impl Program {
+    /// add command line options
+    pub fn add_options(&self, opts: &mut getopts::Options) {
         for p in self.params.iter() {
             match (&p.default, &p.ty) {
                 (None, ParamTy::Basic(_)) => {
@@ -564,33 +628,20 @@ impl Program {
                 }
             }
         }
-        opts
-    }
-
-    /// generate open api doc parameters
-    pub fn generate_openapi(&self) -> Vec<ReferenceOr<Parameter>> {
-        self.params
-            .iter()
-            .map(|p| ReferenceOr::Item(p.to_openapi_param()))
-            .collect()
     }
 
     /// read from args
     pub fn get_matches(
         &self,
         opts: &getopts::Options,
+        args: &Vec<String>,
     ) -> Result<HashMap<String, ParamValue>, getopts::Fail> {
-        use std::env::args;
-        let cmd_args: Vec<String> = args()
-            .collect::<Vec<String>>()
-            .into_iter()
-            .skip(1)
-            .collect();
-        if cmd_args.contains(&"-h".to_string()) || cmd_args.contains(&"--help".to_string()) {
+        use std::process::exit;
+        if args.contains(&"-h".to_string()) || args.contains(&"--help".to_string()) {
             println!("{}", opts.usage("psql"));
             exit(0)
         }
-        match opts.parse(&cmd_args) {
+        match opts.parse(args) {
             Ok(matches) => {
                 let mut values = HashMap::new();
                 for p in self.params.iter() {
@@ -649,57 +700,5 @@ impl Program {
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// take parameter values and return parsed sql statement
-    ///
-    /// **NOTE** this method don't handle parameter wih default value
-    /// so you should pass default value in context
-    pub fn render<D: Dialect>(
-        &self,
-        dialect: &D,
-        context: &HashMap<String, ParamValue>,
-    ) -> Result<Vec<sqlparser::ast::Statement>, PSqlError> {
-        let mut transformed = vec![];
-        for t in self.tokens.iter() {
-            match t {
-                VariableToken::Var(var) => {
-                    if let Some(val) = context.get(var) {
-                        transformed.extend(val.clone().into_token(dialect))
-                    } else {
-                        return Err(PSqlError::MissingContextValue(var.clone()));
-                    }
-                }
-                VariableToken::Normal(t) => transformed.push(t.clone()),
-            }
-        }
-        log::info!(
-            "{}",
-            transformed
-                .iter()
-                .map(|t| t.to_string())
-                .collect::<String>()
-        );
-        let mut parser = sqlparser::parser::Parser::new(transformed, dialect);
-        let mut stmts = Vec::new();
-        let mut expecting_statement_delimiter = false;
-        loop {
-            // ignore empty statements (between successive statement delimiters)
-            while parser.consume_token(&Token::SemiColon) {
-                expecting_statement_delimiter = false;
-            }
-
-            if parser.peek_token() == Token::EOF {
-                break;
-            }
-            if expecting_statement_delimiter {
-                return Err(PSqlError::ExpectEndOfStatement(parser.peek_token()));
-            }
-
-            let statement = parser.parse_statement().map_err(PSqlError::ParseError)?;
-            stmts.push(statement);
-            expecting_statement_delimiter = true;
-        }
-        Ok(stmts)
     }
 }
