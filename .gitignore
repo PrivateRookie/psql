@@ -1,5 +1,7 @@
 /target
 Cargo.lock
 
+/sqls
+
 plan.toml
 schema.json

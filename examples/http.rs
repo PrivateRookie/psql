@@ -39,7 +39,9 @@ async fn main() -> Result<(), ()> {
                             std::process::exit(0);
                         }
                         match plan.create_connections().await {
-                            Ok(conns) => run_http(plan, doc, conns).await,
+                            Ok((mysql_conns, sqlite_conns)) => {
+                                run_http(plan, doc, mysql_conns, sqlite_conns).await
+                            }
                             Err(e) => {
                                 println!("{}", e);
                                 std::process::exit(1);

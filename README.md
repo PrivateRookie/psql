@@ -61,26 +61,31 @@ name = "PrivateRookie"
 url = "https://github.com/PrivateRookie"
 mail = "996514515@qq.com"
 
-# 定义数据库连接
-[conns]
+# 定义 mysql 数据库连接
+[mysql_conns]
 demo = "mysql://xxxxx/default"
 info = "mysql://xxxxx/information_schema"
 
+# 定义 sqlite 数据库连接
+[mysql_conns]
+local = "sqlite:local.db"
+
 # 定义API, 数据库连接和SQL文件
 [queries.demo]
-conn = "demo"
+# 格式为 ["mysql" | "sqlite", <连接名称>]
+conn = ["mysql", "demo"]
 summary = "demo api"
 sql = "./sqls/demo.sql"
 path = "student"
 
 [queries.tables]
-conn = "info"
+conn = ["mysql", "info"]
 summary = "查询数据库中的表"
 sql = "./sqls/tables.sql"
 path = "tables"
 
 [queries.invalid]
-conn = "info"
+conn = ["mysql", "info"]
 summary = "错误SQL导致查询失败"
 sql = "./sqls/invalid.sql"
 path = "invalid"

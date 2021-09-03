@@ -44,7 +44,11 @@ pub struct Plan {
     #[serde(default = "default_prefix")]
     pub prefix: String,
     /// database connections
-    pub conns: HashMap<String, String>,
+    #[serde(default)]
+    pub sqlite_conns: HashMap<String, String>,
+    /// database mysql connections
+    #[serde(default)]
+    pub mysql_conns: HashMap<String, String>,
     /// api paths
     pub queries: IndexMap<String, Query>,
 }
@@ -54,19 +58,38 @@ impl Plan {
         todo!()
     }
 
-    pub async fn create_connections(&self) -> Result<HashMap<String, sqlx::MySqlPool>, String> {
-        let mut pools = HashMap::new();
-        for (name, uri) in self.conns.iter() {
+    pub async fn create_connections(
+        &self,
+    ) -> Result<
+        (
+            HashMap<String, sqlx::MySqlPool>,
+            HashMap<String, sqlx::SqlitePool>,
+        ),
+        String,
+    > {
+        let mut mysql_pools = HashMap::new();
+        for (name, uri) in self.mysql_conns.iter() {
             match sqlx::MySqlPool::connect(uri).await {
                 Ok(pool) => {
-                    pools.insert(name.clone(), pool);
+                    mysql_pools.insert(name.clone(), pool);
                 }
                 Err(e) => {
                     return Err(e.to_string());
                 }
             }
         }
-        Ok(pools)
+        let mut sqlite_pools = HashMap::new();
+        for (name, uri) in self.sqlite_conns.iter() {
+            match sqlx::SqlitePool::connect(uri).await {
+                Ok(pool) => {
+                    sqlite_pools.insert(name.clone(), pool);
+                }
+                Err(e) => {
+                    return Err(e.to_string());
+                }
+            }
+        }
+        Ok((mysql_pools, sqlite_pools))
     }
 
     /// pub generate api doc
@@ -131,6 +154,14 @@ impl Plan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum Dialect {
+    #[serde(rename = "mysql")]
+    Mysql,
+    #[serde(rename = "sqlite")]
+    Sqlite,
+}
+
 /// doc contact info
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Contact {
@@ -143,7 +174,7 @@ pub struct Contact {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Query {
     /// connection string name
-    pub conn: String,
+    pub conn: (Dialect, String),
     /// api summary
     pub summary: Option<String>,
     /// sql file location
