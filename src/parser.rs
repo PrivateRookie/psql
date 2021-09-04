@@ -49,6 +49,23 @@ impl ToString for ParamValue {
     }
 }
 
+impl From<ParamValue> for serde_json::Value {
+    fn from(source: ParamValue) -> Self {
+        match source {
+            ParamValue::Str(str) => serde_json::Value::String(str),
+            ParamValue::Num(num) => {
+                serde_json::Value::Number(serde_json::Number::from_f64(num).unwrap())
+            }
+            ParamValue::Raw(raw) => serde_json::Value::String(raw),
+            ParamValue::Array(arr) => serde_json::Value::Array(
+                arr.into_iter()
+                    .map(|i| serde_json::Value::from(i))
+                    .collect::<Vec<serde_json::Value>>(),
+            ),
+        }
+    }
+}
+
 impl ParamValue {
     pub fn into_token<D: Dialect>(self, dialect: &D) -> Vec<Token> {
         match self {
@@ -162,13 +179,17 @@ impl Param {
             ParamTy::Array(inner_ty) => SchemaKind::Type(Type::Array(ArrayType {
                 items: ReferenceOr::Item(Box::new(Schema {
                     schema_kind: inner_ty.to_openapi_schema_kind(),
-                    schema_data: Default::default(),
+                    schema_data: SchemaData {
+                        default: None,
+                        ..Default::default()
+                    },
                 })),
                 min_items: None,
                 max_items: None,
                 unique_items: false,
             })),
         };
+        let default: Option<serde_json::Value> = self.default.clone().map(|default| default.into());
         Parameter::Query {
             parameter_data: ParameterData {
                 name: self.name.clone(),
@@ -176,7 +197,10 @@ impl Param {
                 required: self.default.is_none(),
                 deprecated: None,
                 format: ParameterSchemaOrContent::Schema(ReferenceOr::Item(Schema {
-                    schema_data: SchemaData::default(),
+                    schema_data: SchemaData {
+                        default,
+                        ..Default::default()
+                    },
                     schema_kind,
                 })),
                 example: None,
