@@ -49,6 +49,7 @@ impl ToString for ParamValue {
     }
 }
 
+#[cfg(feature = "http")]
 impl From<ParamValue> for serde_json::Value {
     fn from(source: ParamValue) -> Self {
         match source {
