@@ -59,7 +59,7 @@ impl From<ParamValue> for serde_json::Value {
             ParamValue::Raw(raw) => serde_json::Value::String(raw),
             ParamValue::Array(arr) => serde_json::Value::Array(
                 arr.into_iter()
-                    .map(|i| serde_json::Value::from(i))
+                    .map(serde_json::Value::from)
                     .collect::<Vec<serde_json::Value>>(),
             ),
         }
@@ -658,7 +658,7 @@ impl Program {
     pub fn get_matches(
         &self,
         opts: &getopts::Options,
-        args: &Vec<String>,
+        args: &[String],
     ) -> Result<HashMap<String, ParamValue>, getopts::Fail> {
         use std::process::exit;
         if args.contains(&"-h".to_string()) || args.contains(&"--help".to_string()) {

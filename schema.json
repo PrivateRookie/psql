@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Plan",
+  "description": "http serve config",
+  "type": "object",
+  "required": [
+    "queries",
+    "title"
+  ],
+  "properties": {
+    "title": {
+      "description": "doc title",
+      "type": "string"
+    },
+    "description": {
+      "description": "doc description",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "contact": {
+      "description": "api contact info",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Contact"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "doc_path": {
+      "description": "swagger api doc path",
+      "default": "_doc",
+      "type": "string"
+    },
+    "address": {
+      "description": "http service bind address",
+      "default": [
+        "127.0.0.1:12345"
+      ],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "prefix": {
+      "description": "api prefix route",
+      "default": "api",
+      "type": "string"
+    },
+    "sqlite_conns": {
+      "description": "database connections",
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "mysql_conns": {
+      "description": "database mysql connections",
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "queries": {
+      "description": "api paths",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Query"
+      }
+    }
+  },
+  "definitions": {
+    "Contact": {
+      "description": "doc contact info",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Query": {
+      "description": "api query description",
+      "type": "object",
+      "required": [
+        "conn",
+        "path",
+        "sql"
+      ],
+      "properties": {
+        "conn": {
+          "description": "connection string name",
+          "type": "array",
+          "items": [
+            {
+              "$ref": "#/definitions/Dialect"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "summary": {
+          "description": "api summary",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sql": {
+          "description": "sql file location",
+          "type": "string"
+        },
+        "path": {
+          "description": "api relative url path",
+          "type": "string"
+        }
+      }
+    },
+    "Dialect": {
+      "type": "string",
+      "enum": [
+        "mysql",
+        "sqlite"
+      ]
+    }
+  }
+}

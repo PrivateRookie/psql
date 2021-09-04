@@ -104,8 +104,8 @@ impl Plan {
             let Contact { name, url, email } = c;
             openapiv3::Contact {
                 name: Some(name),
-                url: url,
-                email: email,
+                url,
+                email,
                 extensions: Default::default(),
             }
         });

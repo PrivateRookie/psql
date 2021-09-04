@@ -15,7 +15,7 @@ select name from t where age=@age and name like @pattern and addr in @addrs and 
     let prog = Program::parse(&dialect, sql).unwrap();
     let mut opts = getopts::Options::new();
     prog.add_options(&mut opts);
-    match prog.get_matches(&opts, &std::env::args().collect()) {
+    match prog.get_matches(&opts, &std::env::args().collect::<Vec<String>>()) {
         Ok(values) => match prog.render(&dialect, &values) {
             Ok(stmts) => {
                 println!(

@@ -134,7 +134,7 @@ async fn serve_mysql_query(
                     msg: format!("{:#?}", e),
                     code: code.as_u16(),
                 };
-                return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
+                Ok(warp::reply::with_status(warp::reply::json(&msg), code))
             }
         },
         Err(msg) => Ok(warp::reply::with_status(
@@ -185,7 +185,7 @@ async fn serve_sqlite_query(
                     msg: format!("{:#?}", e),
                     code: code.as_u16(),
                 };
-                return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
+                Ok(warp::reply::with_status(warp::reply::json(&msg), code))
             }
         },
         Err(msg) => Ok(warp::reply::with_status(
@@ -223,16 +223,12 @@ pub async fn run_http(
             plan::Dialect::Sqlite => false,
         })
         .map(move |(_name, query)| {
-            let pool = mysql_conns.get(&query.conn.1).map(|p| p.clone()).unwrap();
+            let pool = mysql_conns.get(&query.conn.1).cloned().unwrap();
             let prog = query.read_sql().unwrap();
             warp::get()
                 .and(warp::path(prefix.clone()))
                 .and(warp::path(query.path))
-                .and(
-                    warp::query::raw()
-                        .or(warp::any().map(|| String::new()))
-                        .unify(),
-                )
+                .and(warp::query::raw().or(warp::any().map(String::new)).unify())
                 .and(warp::any().map(move || prog.clone()))
                 .and(warp::any().map(move || pool.clone()))
                 .and_then(serve_mysql_query)
@@ -247,14 +243,14 @@ pub async fn run_http(
             plan::Dialect::Sqlite => true,
         })
         .map(move |(_name, query)| {
-            let pool = sqlite_conns.get(&query.conn.1).map(|p| p.clone()).unwrap();
+            let pool = sqlite_conns.get(&query.conn.1).cloned().unwrap();
             let prog = query.read_sql().unwrap();
             warp::get()
                 .and(warp::path(prefix_cloned.clone()))
                 .and(warp::path(query.path))
                 .and(
                     warp::query::raw()
-                        .or(warp::any().map(|| String::new()))
+                        .or(warp::any().map(String::new))
                         .unify(),
                 )
                 .and(warp::any().map(move || prog.clone()))
