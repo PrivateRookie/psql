@@ -1,5 +1,5 @@
 use crate::parser::{ParamValue, Program};
-use futures::future;
+use futures::{future, lock::Mutex};
 use openapiv3::OpenAPI;
 use output::{QueryOutput, QueryOutputMapSer};
 pub use plan::Plan;
@@ -7,8 +7,10 @@ use querystring::querify;
 use serde::{Deserialize, Serialize};
 use sqlparser::dialect::MySqlDialect;
 use sqlx::{MySqlPool, SqlitePool};
-use std::{collections::HashMap, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use warp::{hyper::StatusCode, Filter};
+
+use self::plan::{PlanDb, Query};
 
 mod index;
 pub mod output;
@@ -22,6 +24,44 @@ pub struct ApiMsg {
 
 async fn serve_doc(doc: OpenAPI) -> Result<impl warp::Reply, Infallible> {
     Ok(warp::reply::json(&doc))
+}
+
+async fn dynamic_doc(plan_db: PlanDb) -> Result<impl warp::Reply, Infallible> {
+    let plan = plan_db.lock().await;
+    Ok(warp::reply::json(&plan.openapi_doc()))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewQuery {
+    /// query name
+    pub name: String,
+    /// connection string name
+    pub conn: String,
+    /// api summary
+    pub summary: Option<String>,
+    /// query sql or path starts with '@'
+    pub sql: String,
+    /// api relative url path
+    pub path: String,
+}
+
+async fn add_query(new_query: NewQuery, plan_db: PlanDb) -> Result<impl warp::Reply, Infallible> {
+    let mut plan = plan_db.lock().await;
+    let NewQuery {
+        name,
+        conn,
+        summary,
+        sql,
+        path,
+    } = new_query;
+    let query = Query {
+        conn,
+        summary,
+        sql,
+        path,
+    };
+    plan.queries.insert(name, query);
+    Ok(warp::reply::json(&{}))
 }
 
 fn get_context(qs: String, prog: &Program) -> Result<HashMap<String, ParamValue>, ApiMsg> {
@@ -195,6 +235,161 @@ async fn serve_sqlite_query(
     }
 }
 
+fn new_query_body() -> impl Filter<Extract = (NewQuery,), Error = warp::Rejection> + Clone {
+    warp::body::content_length_limit(1024 * 16).and(warp::body::json())
+}
+
+async fn serve_query(
+    qs: String,
+    path: warp::path::FullPath,
+    plan_db: PlanDb,
+    mysql_dbs: Arc<Mutex<HashMap<String, MySqlPool>>>,
+    sqlite_dbs: Arc<Mutex<HashMap<String, SqlitePool>>>,
+) -> Result<impl warp::Reply, Infallible> {
+    let plan = plan_db.lock().await;
+    let all_paths: Vec<(String, Query)> = plan
+        .queries
+        .values()
+        .map(|q| (q.path.clone(), q.clone()))
+        .collect();
+    match all_paths.iter().position(|p| path.as_str().ends_with(&p.0)) {
+        Some(idx) => {
+            let query = &all_paths.get(idx).unwrap().1;
+            let prog = query.read_sql().unwrap();
+            let mut code = warp::http::StatusCode::BAD_REQUEST;
+            match get_context(qs, &prog) {
+                Ok(context) => match prog.render(&MySqlDialect {}, &context) {
+                    Ok(stmts) => {
+                        if stmts.len() != 1 {
+                            let msg = ApiMsg {
+                                msg: format!("expect 1 sql statement, got {}", stmts.len()),
+                                code: code.as_u16(),
+                            };
+                            return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
+                        }
+                        let stmt = stmts.first().unwrap();
+                        match mysql_dbs.lock().await.get(&query.conn) {
+                            Some(pool) => {
+                                match sqlx::query(&stmt.to_string())
+                                    .fetch_all(pool)
+                                    .await
+                                    .map(|rows| QueryOutput { rows })
+                                {
+                                    Ok(output) => {
+                                        code = warp::http::StatusCode::OK;
+                                        let json = warp::reply::json(&QueryOutputMapSer(&output));
+                                        Ok(warp::reply::with_status(json, code))
+                                    }
+                                    Err(e) => {
+                                        let msg = ApiMsg {
+                                            msg: format!("SQL: {}\n{}", &stmt, e),
+                                            code: code.as_u16(),
+                                        };
+                                        Ok(warp::reply::with_status(warp::reply::json(&msg), code))
+                                    }
+                                }
+                            }
+                            None => {
+                                let dbs = sqlite_dbs.lock().await;
+                                let pool = dbs.get(&query.conn).unwrap();
+                                match sqlx::query(&stmt.to_string())
+                                    .fetch_all(pool)
+                                    .await
+                                    .map(|rows| QueryOutput { rows })
+                                {
+                                    Ok(output) => {
+                                        code = warp::http::StatusCode::OK;
+                                        let json = warp::reply::json(&QueryOutputMapSer(&output));
+                                        Ok(warp::reply::with_status(json, code))
+                                    }
+                                    Err(e) => {
+                                        let msg = ApiMsg {
+                                            msg: format!("SQL: {}\n{}", &stmt, e),
+                                            code: code.as_u16(),
+                                        };
+                                        Ok(warp::reply::with_status(warp::reply::json(&msg), code))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = ApiMsg {
+                            msg: format!("{:#?}", e),
+                            code: code.as_u16(),
+                        };
+                        Ok(warp::reply::with_status(warp::reply::json(&msg), code))
+                    }
+                },
+                Err(msg) => Ok(warp::reply::with_status(
+                    warp::reply::json(&msg),
+                    StatusCode::from_u16(msg.code).unwrap(),
+                )),
+            }
+        }
+        None => {
+            let status = warp::http::StatusCode::BAD_REQUEST;
+            let msg = ApiMsg {
+                msg: format!("{} not found", path.as_str()),
+                code: 404,
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&msg), status))
+        }
+    }
+}
+
+pub async fn run_dynamic_http(
+    plan: Plan,
+    mysql_conns: HashMap<String, sqlx::MySqlPool>,
+    sqlite_conns: HashMap<String, sqlx::SqlitePool>,
+) -> Result<(), ()> {
+    let prefix = plan.prefix.clone();
+    let doc_path = plan.doc_path.clone();
+    let mysql_dbs = Arc::new(Mutex::new(mysql_conns));
+    let sqlite_dbs = Arc::new(Mutex::new(sqlite_conns));
+    let plan_db = Arc::new(Mutex::new(plan.clone()));
+    let plan_doc = plan_db.clone();
+    let doc_route = warp::get()
+        .and(warp::path(prefix.clone()))
+        .and(warp::path(plan.doc_path.clone()))
+        .and(warp::any().map(move || plan_doc.clone()))
+        .and_then(dynamic_doc);
+    let index = warp::get()
+        .and(warp::path("index"))
+        .and(warp::any().map(move || format!("{}/{}", &prefix, &doc_path)))
+        .and_then(index::serve_index);
+    let plan_c = plan_db.clone();
+    let add_query_route = warp::post()
+        .and(warp::path("add_query"))
+        .and(new_query_body())
+        .and(warp::any().map(move || plan_db.clone()))
+        .and_then(add_query);
+    let query_route = warp::any()
+        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
+        .and(warp::path::full())
+        .and(warp::any().map(move || plan_c.clone()))
+        .and(warp::any().map(move || mysql_dbs.clone()))
+        .and(warp::any().map(move || sqlite_dbs.clone()))
+        .and_then(serve_query);
+    let fs = plan
+        .address
+        .iter()
+        .map(move |addr| {
+            warp::serve(
+                index
+                    .clone()
+                    .or(doc_route.clone())
+                    .or(add_query_route.clone())
+                    .or(query_route.clone()),
+            )
+            .bind_ephemeral((addr.ip(), addr.port()))
+            .1
+        })
+        .collect::<Vec<_>>();
+    future::join_all(fs).await;
+    Ok(())
+}
+
 pub async fn run_http(
     plan: Plan,
     doc: OpenAPI,
@@ -218,12 +413,9 @@ pub async fn run_http(
     let mysql_api_routes = queries
         .clone()
         .into_iter()
-        .filter(|(_name, query)| match query.conn.0 {
-            plan::Dialect::Mysql => true,
-            plan::Dialect::Sqlite => false,
-        })
+        .filter(|(_name, query)| plan.mysql_conns.get(&query.conn).is_some())
         .map(move |(_name, query)| {
-            let pool = mysql_conns.get(&query.conn.1).cloned().unwrap();
+            let pool = mysql_conns.get(&query.conn).cloned().unwrap();
             let prog = query.read_sql().unwrap();
             warp::get()
                 .and(warp::path(prefix.clone()))
@@ -238,21 +430,14 @@ pub async fn run_http(
     let sqlite_api_routes = queries
         .clone()
         .into_iter()
-        .filter(|(_name, query)| match query.conn.0 {
-            plan::Dialect::Mysql => false,
-            plan::Dialect::Sqlite => true,
-        })
+        .filter(|(_name, query)| plan.sqlite_conns.get(&query.conn).is_some())
         .map(move |(_name, query)| {
-            let pool = sqlite_conns.get(&query.conn.1).cloned().unwrap();
+            let pool = sqlite_conns.get(&query.conn).cloned().unwrap();
             let prog = query.read_sql().unwrap();
             warp::get()
                 .and(warp::path(prefix_cloned.clone()))
                 .and(warp::path(query.path))
-                .and(
-                    warp::query::raw()
-                        .or(warp::any().map(String::new))
-                        .unify(),
-                )
+                .and(warp::query::raw().or(warp::any().map(String::new)).unify())
                 .and(warp::any().map(move || prog.clone()))
                 .and(warp::any().map(move || pool.clone()))
                 .and_then(serve_sqlite_query)

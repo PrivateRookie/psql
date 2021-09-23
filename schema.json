@@ -110,17 +110,7 @@
       "properties": {
         "conn": {
           "description": "connection string name",
-          "type": "array",
-          "items": [
-            {
-              "$ref": "#/definitions/Dialect"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "maxItems": 2,
-          "minItems": 2
+          "type": "string"
         },
         "summary": {
           "description": "api summary",
@@ -130,7 +120,7 @@
           ]
         },
         "sql": {
-          "description": "sql file location",
+          "description": "query sql or path starts with '@'",
           "type": "string"
         },
         "path": {
@@ -138,13 +128,6 @@
           "type": "string"
         }
       }
-    },
-    "Dialect": {
-      "type": "string",
-      "enum": [
-        "mysql",
-        "sqlite"
-      ]
     }
   }
 }

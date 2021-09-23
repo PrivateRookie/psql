@@ -1,15 +1,10 @@
+use futures::lock::Mutex;
 use indexmap::IndexMap;
 use openapiv3::{OpenAPI, PathItem, ReferenceOr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlparser::dialect::MySqlDialect;
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::Read,
-    net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
-};
+use std::{collections::HashMap, fs::File, io::Read, net::{SocketAddr, ToSocketAddrs}, sync::Arc};
 
 use crate::{errors::PSqlError, parser::Program};
 
@@ -24,6 +19,8 @@ fn default_addr() -> Vec<SocketAddr> {
 fn default_doc_path() -> String {
     "_doc".to_string()
 }
+
+pub type PlanDb = Arc<Mutex<Plan>>;
 
 /// http serve config
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -162,6 +159,18 @@ pub enum Dialect {
     Sqlite,
 }
 
+impl Dialect {
+    pub fn from_uri(uri: &str) -> Self {
+        if uri.starts_with("mysql") {
+            Self::Mysql
+        } else if uri.starts_with("sqlite") {
+            Self::Sqlite
+        } else {
+            Self::Sqlite
+        }
+    }
+}
+
 /// doc contact info
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Contact {
@@ -174,23 +183,30 @@ pub struct Contact {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Query {
     /// connection string name
-    pub conn: (Dialect, String),
+    pub conn: String,
     /// api summary
     pub summary: Option<String>,
-    /// sql file location
-    pub sql: PathBuf,
+    /// query sql or path starts with '@'
+    pub sql: String,
     /// api relative url path
     pub path: String,
 }
 
 impl Query {
     pub fn read_sql(&self) -> Result<Program, PSqlError> {
-        let mut sql_str = String::new();
+        let sql_str = if self.sql.starts_with("@") {
+            let path = self.sql.trim_start_matches('@');
+            let mut sql_str = String::new();
+
+            let mut file = File::open(&path)
+                .map_err(|e| PSqlError::ReadSQLError(self.sql.clone(), e.to_string()))?;
+            file.read_to_string(&mut sql_str)
+                .map_err(|e| PSqlError::ReadSQLError(self.sql.clone(), e.to_string()))?;
+            sql_str
+        } else {
+            self.sql.clone()
+        };
         let dialect = MySqlDialect {};
-        let mut file = File::open(&self.sql)
-            .map_err(|e| PSqlError::ReadSQLError(self.sql.clone(), e.to_string()))?;
-        file.read_to_string(&mut sql_str)
-            .map_err(|e| PSqlError::ReadSQLError(self.sql.clone(), e.to_string()))?;
         Program::parse(&dialect, &sql_str)
     }
 }
