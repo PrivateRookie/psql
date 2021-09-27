@@ -16,6 +16,9 @@ use openapiv3::{
     ArrayType, NumberType, Parameter, ParameterData, ParameterSchemaOrContent, ReferenceOr, Schema,
     SchemaData, SchemaKind, StringType, Type,
 };
+#[cfg(feature = "http")]
+use serde::Deserialize;
+
 use sqlparser::{
     dialect::Dialect,
     tokenizer::{Token, Whitespace},
@@ -23,6 +26,8 @@ use sqlparser::{
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, PartialEq, Clone)]
+#[derive(Deserialize)]
+#[serde(untagged)]
 pub enum ParamValue {
     Str(String),
     Num(f64),

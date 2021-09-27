@@ -1,0 +1,20 @@
+POST  http://localhost:8888/add_query/
+
+[
+    {
+    "name": "list student",
+    "conn": "demo",
+    "sql": "select name, age, school_id from student",
+    "path": "student/list"
+    },
+    {
+    "name": "create student",
+    "conn": "demo",
+    "sql": "insert into student (`name`, `age`, `school_id`) values (@name, @age, @school_id)",
+    "path": "student/create"
+    }
+]
+
+###
+
+GET http://localhost:8888/brand
