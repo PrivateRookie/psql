@@ -1,4 +1,5 @@
 use crate::{errors::PSqlError, token::VariableToken};
+use indexmap::IndexMap;
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_while},
@@ -16,6 +17,7 @@ use openapiv3::{
     ArrayType, NumberType, Parameter, ParameterData, ParameterSchemaOrContent, ReferenceOr, Schema,
     SchemaData, SchemaKind, StringType, Type,
 };
+use openapiv3::{MediaType, ObjectType, RequestBody};
 #[cfg(feature = "http")]
 use serde::Deserialize;
 
@@ -25,8 +27,7 @@ use sqlparser::{
 };
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, PartialEq, Clone)]
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum ParamValue {
     Str(String),
@@ -177,9 +178,9 @@ pub struct Param {
     pub help: String,
 }
 
+#[cfg(feature = "http")]
 impl Param {
-    #[cfg(feature = "http")]
-    pub fn to_openapi_param(&self) -> Parameter {
+    pub fn to_openapi_schema(&self) -> Schema {
         let schema_kind = match &self.ty {
             ParamTy::Basic(inner_ty) => inner_ty.to_openapi_schema_kind(),
             ParamTy::Array(inner_ty) => SchemaKind::Type(Type::Array(ArrayType {
@@ -196,19 +197,25 @@ impl Param {
             })),
         };
         let default: Option<serde_json::Value> = self.default.clone().map(|default| default.into());
+        Schema {
+            schema_data: SchemaData {
+                default,
+                ..Default::default()
+            },
+            schema_kind,
+        }
+    }
+
+    pub fn to_openapi_param(&self) -> Parameter {
         Parameter::Query {
             parameter_data: ParameterData {
                 name: self.name.clone(),
                 description: Some(self.help.clone()),
                 required: self.default.is_none(),
                 deprecated: None,
-                format: ParameterSchemaOrContent::Schema(ReferenceOr::Item(Schema {
-                    schema_data: SchemaData {
-                        default,
-                        ..Default::default()
-                    },
-                    schema_kind,
-                })),
+                format: ParameterSchemaOrContent::Schema(ReferenceOr::Item(
+                    self.to_openapi_schema(),
+                )),
                 example: None,
                 examples: Default::default(),
                 explode: None,
@@ -600,11 +607,44 @@ impl Program {
 #[cfg(feature = "http")]
 impl Program {
     /// generate open api doc parameters
-    pub fn generate_openapi(&self) -> Vec<ReferenceOr<Parameter>> {
+    pub fn generate_params(&self) -> Vec<ReferenceOr<Parameter>> {
         self.params
             .iter()
             .map(|p| ReferenceOr::Item(p.to_openapi_param()))
             .collect()
+    }
+
+    pub fn generate_req_body(&self) -> Option<ReferenceOr<RequestBody>> {
+        let obj = ObjectType {
+            properties: self
+                .params
+                .iter()
+                .map(|p| {
+                    (
+                        p.name.clone(),
+                        ReferenceOr::Item(Box::new(p.to_openapi_schema())),
+                    )
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let mut content = IndexMap::new();
+        let media_type = MediaType {
+            schema: Some(ReferenceOr::Item(Schema {
+                schema_data: SchemaData {
+                    nullable: false,
+                    ..Default::default()
+                },
+                schema_kind: SchemaKind::Type(Type::Object(obj)),
+            })),
+            ..Default::default()
+        };
+        content.insert("application/json".to_string(), media_type.clone());
+        content.insert("application/x-www-form-urlencoded".to_string(), media_type);
+        Some(ReferenceOr::Item(RequestBody {
+            content,
+            ..Default::default()
+        }))
     }
 }
 

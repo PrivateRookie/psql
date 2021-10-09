@@ -4,7 +4,13 @@ use openapiv3::{OpenAPI, PathItem, ReferenceOr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlparser::dialect::MySqlDialect;
-use std::{collections::HashMap, fs::File, io::Read, net::{SocketAddr, ToSocketAddrs}, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::Read,
+    net::{SocketAddr, ToSocketAddrs},
+    sync::Arc,
+};
 
 use crate::{errors::PSqlError, parser::Program};
 
@@ -120,9 +126,8 @@ impl Plan {
         self.queries.clone().into_iter().for_each(|(_, query)| {
             let prog = query.read_sql().unwrap();
             let Query { summary, .. } = query;
-            let get_op = openapiv3::Operation {
+            let mut operation = openapiv3::Operation {
                 summary,
-                parameters: prog.generate_openapi(),
                 responses: openapiv3::Responses {
                     default: Some(ReferenceOr::Item(openapiv3::Response {
                         description: "default response".to_string(),
@@ -133,13 +138,44 @@ impl Plan {
                 },
                 ..Default::default()
             };
-            paths.insert(
-                format!("/{}", query.path),
-                ReferenceOr::Item(PathItem {
-                    get: Some(get_op),
-                    ..Default::default()
-                }),
-            );
+            let val = match query.method {
+                Method::Get => {
+                    operation.parameters = prog.generate_params();
+                    ReferenceOr::Item(PathItem {
+                        get: Some(operation),
+                        ..Default::default()
+                    })
+                }
+                Method::Post => {
+                    operation.request_body = prog.generate_req_body();
+                    ReferenceOr::Item(PathItem {
+                        post: Some(operation),
+                        ..Default::default()
+                    })
+                }
+                Method::Put => {
+                    operation.request_body = prog.generate_req_body();
+                    ReferenceOr::Item(PathItem {
+                        put: Some(operation),
+                        ..Default::default()
+                    })
+                }
+                Method::Patch => {
+                    operation.request_body = prog.generate_req_body();
+                    ReferenceOr::Item(PathItem {
+                        patch: Some(operation),
+                        ..Default::default()
+                    })
+                }
+                Method::Delete => {
+                    operation.request_body = prog.generate_req_body();
+                    ReferenceOr::Item(PathItem {
+                        delete: Some(operation),
+                        ..Default::default()
+                    })
+                }
+            };
+            paths.insert(format!("/{}", query.path), val);
         });
         OpenAPI {
             info,
@@ -179,11 +215,46 @@ pub struct Contact {
     pub email: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum Method {
+    #[serde(rename = "get")]
+    Get,
+    #[serde(rename = "post")]
+    Post,
+    #[serde(rename = "put")]
+    Put,
+    #[serde(rename = "patch")]
+    Patch,
+    #[serde(rename = "delete")]
+    Delete,
+}
+
+impl From<Method> for warp::http::Method {
+    fn from(m: Method) -> Self {
+        match m {
+            Method::Get => warp::http::Method::GET,
+            Method::Post => warp::http::Method::POST,
+            Method::Put => warp::http::Method::PUT,
+            Method::Patch => warp::http::Method::PATCH,
+            Method::Delete => warp::http::Method::DELETE,
+        }
+    }
+}
+
+impl Default for Method {
+    fn default() -> Self {
+        Self::Get
+    }
+}
+
 /// api query description
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Query {
     /// connection string name
     pub conn: String,
+    /// http method
+    #[serde(default)]
+    pub method: Method,
     /// api summary
     pub summary: Option<String>,
     /// query sql or path starts with '@'

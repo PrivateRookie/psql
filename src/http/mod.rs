@@ -1,5 +1,5 @@
 use crate::parser::{ParamValue, Program};
-use futures::{future, lock::Mutex};
+use futures::{future, lock::Mutex, TryStreamExt};
 use openapiv3::OpenAPI;
 use output::{QueryOutput, QueryOutputMapSer};
 pub use plan::Plan;
@@ -38,6 +38,8 @@ async fn dynamic_doc(plan_db: PlanDb) -> Result<impl warp::Reply, Infallible> {
 pub struct NewQuery {
     /// query name
     pub name: String,
+    /// http method
+    pub method: plan::Method,
     /// connection string name
     pub conn: String,
     /// api summary
@@ -56,6 +58,7 @@ async fn add_query(
     new_queries.into_iter().for_each(|new_query| {
         let NewQuery {
             name,
+            method,
             conn,
             summary,
             sql,
@@ -63,6 +66,7 @@ async fn add_query(
         } = new_query;
         let query = Query {
             conn,
+            method,
             summary,
             sql,
             path,
@@ -480,6 +484,8 @@ pub async fn run_dynamic_http(
         .and(warp::path::full())
         .and(
             warp::body::json()
+                .or(warp::body::form())
+                .unify()
                 .or(warp::any().map(|| HashMap::default()))
                 .unify(),
         )

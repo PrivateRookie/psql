@@ -112,6 +112,15 @@
           "description": "connection string name",
           "type": "string"
         },
+        "method": {
+          "description": "http method",
+          "default": "get",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Method"
+            }
+          ]
+        },
         "summary": {
           "description": "api summary",
           "type": [
@@ -128,6 +137,16 @@
           "type": "string"
         }
       }
+    },
+    "Method": {
+      "type": "string",
+      "enum": [
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete"
+      ]
     }
   }
 }
