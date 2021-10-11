@@ -47,10 +47,15 @@ Content-Type: application/json
 POST http://localhost:8888/api/add_conn
 Content-Type: application/json
 
-{
-    "uri": "mysql://root:1234TttT@localhost:3306/mysql",
-    "name": "test_mysql"
-}
+[   {
+        "uri": "mysql://root:1234TttT@localhost:3306/mysql",
+        "name": "test_mysql"
+    },
+    {
+        "uri": "sqlite://local.db",
+        "name": "local"
+    }
+]
 
 ###
 
@@ -59,9 +64,30 @@ Content-Type: application/json
 
 [
     {
-    "name": "test_mysql",
-    "conn": "test_mysql",
-    "sql": "select * from db;",
-    "path": "test_mysql"
+        "name": "test_mysql",
+        "conn": "test_mysql",
+        "sql": "select * from db;",
+        "path": "test_mysql"
+    },
+    {
+        "name": "whoami",
+        "conn": "test_mysql",
+        "sql": "select DATABASE() AS `database`;",
+        "path": "whoami"
+    },
+    {
+        "name": "whoami_sqlite",
+        "conn": "local",
+        "sql": "select 'main' AS `database`;",
+        "path": "whoami_sqlite"
+    },
+    {
+        "name": "sqlite pragma",
+        "conn": "local",
+        "sql": "--? table: str // 表名称\nSELECT `name` AS `column_name`, `dflt_value` AS `default_value`, `notnull` AS `is_nullable`, `type`, `pk`\nFROM pragma_table_info(@table)",
+        "path": "sqlite_pragma"
     }
 ]
+
+###
+GET http://localhost:8888/api/explore/status

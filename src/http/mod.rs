@@ -18,6 +18,7 @@ use warp::{
 
 use self::plan::{PlanDb, Query};
 
+pub mod explore;
 mod index;
 pub mod output;
 pub mod plan;
@@ -87,59 +88,65 @@ pub struct NewConn {
 }
 
 async fn add_conn(
-    new_conn: NewConn,
+    new_conns: Vec<NewConn>,
+    plan_db: Arc<Mutex<Plan>>,
     mysql_dbs: Arc<Mutex<HashMap<String, MySqlPool>>>,
     sqlite_dbs: Arc<Mutex<HashMap<String, SqlitePool>>>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let dialect = Dialect::from_uri(&new_conn.uri);
-    let mut code = warp::http::StatusCode::CREATED;
-    match dialect {
-        Dialect::Mysql => match sqlx::MySqlPool::connect(&new_conn.uri).await {
-            Ok(pool) => {
-                let mut mysql_dbs = mysql_dbs.lock().await;
-                mysql_dbs.insert(new_conn.name, pool);
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&ApiMsg {
-                        msg: "new mysql connection added".to_string(),
-                        code: code.as_u16(),
-                    }),
-                    code,
-                ))
-            }
-            Err(e) => {
-                code = warp::http::StatusCode::BAD_REQUEST;
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&ApiMsg {
-                        msg: format!("failed to add mysql connection {}", e.to_string()),
-                        code: code.as_u16(),
-                    }),
-                    code,
-                ))
-            }
-        },
-        Dialect::Sqlite => match sqlx::SqlitePool::connect(&new_conn.uri).await {
-            Ok(pool) => {
-                let mut sqlite_dbs = sqlite_dbs.lock().await;
-                sqlite_dbs.insert(new_conn.name, pool);
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&ApiMsg {
-                        msg: "new sqlite connection added".to_string(),
-                        code: code.as_u16(),
-                    }),
-                    code,
-                ))
-            }
-            Err(e) => {
-                code = warp::http::StatusCode::BAD_REQUEST;
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&ApiMsg {
-                        msg: format!("failed to add sqlite connection {}", e.to_string()),
-                        code: code.as_u16(),
-                    }),
-                    code,
-                ))
-            }
-        },
+    let mut failed = vec![];
+    let mut ok = vec![];
+    for new_conn in new_conns {
+        let dialect = Dialect::from_uri(&new_conn.uri);
+        match dialect {
+            Dialect::Mysql => match sqlx::MySqlPool::connect(&new_conn.uri).await {
+                Ok(pool) => {
+                    let mut mysql_dbs = mysql_dbs.lock().await;
+                    mysql_dbs.insert(new_conn.name.clone(), pool);
+                    let mut plan = plan_db.lock().await;
+                    plan.mysql_conns
+                        .insert(new_conn.name.clone(), new_conn.uri.clone());
+                    ok.push((new_conn, "ok".to_string()));
+                }
+                Err(e) => {
+                    failed.push((new_conn, e.to_string()));
+                }
+            },
+            Dialect::Sqlite => match sqlx::SqlitePool::connect(&new_conn.uri).await {
+                Ok(pool) => {
+                    let mut sqlite_dbs = sqlite_dbs.lock().await;
+                    sqlite_dbs.insert(new_conn.name.clone(), pool);
+                    let mut plan = plan_db.lock().await;
+                    plan.sqlite_conns
+                        .insert(new_conn.name.clone(), new_conn.uri.clone());
+                    ok.push((new_conn, "ok".to_string()));
+                }
+                Err(e) => {
+                    failed.push((new_conn, e.to_string()));
+                }
+            },
+        }
+    }
+    if failed.is_empty() {
+        let code = warp::http::StatusCode::CREATED;
+        Ok(warp::reply::with_status(
+            warp::reply::json(&ApiMsg {
+                msg: "all connection created".to_string(),
+                code: code.as_u16(),
+            }),
+            code,
+        ))
+    } else {
+        let code = warp::http::StatusCode::BAD_REQUEST;
+        let mut result = HashMap::with_capacity(2);
+        result.insert("ok", ok);
+        result.insert("failed", failed);
+        Ok(warp::reply::with_status(
+            warp::reply::json(&ApiMsg {
+                msg: serde_json::to_string_pretty(&result).unwrap(),
+                code: code.as_u16(),
+            }),
+            code,
+        ))
     }
 }
 
@@ -534,21 +541,30 @@ pub async fn run_dynamic_http(
         .and(warp::any().map(move || format!("{}/{}", &prefix.clone(), &doc_path)))
         .and_then(index::serve_index);
     let plan_c = plan_db.clone();
+    let explore_status_route = warp::get()
+        .and(warp::path(query_prefix.clone()))
+        .and(warp::path!("explore" / "status"))
+        .and(warp::any().map(move || plan_c.clone()))
+        .and_then(explore::status);
+    let plan_c = plan_db.clone();
     let add_query_route = warp::post()
         .and(warp::path(query_prefix.clone()))
         .and(warp::path("add_query"))
         .and(new_query_body())
-        .and(warp::any().map(move || plan_db.clone()))
+        .and(warp::any().map(move || plan_c.clone()))
         .and_then(add_query);
+    let plan_db_c = plan_db.clone();
     let mysql_dbs_c = mysql_dbs.clone();
     let sqlite_dbs_c = sqlite_dbs.clone();
     let add_conn_route = warp::post()
         .and(warp::path(query_prefix.clone()))
         .and(warp::path("add_conn"))
         .and(warp::body::json())
+        .and(warp::any().map(move || plan_db_c.clone()))
         .and(warp::any().map(move || mysql_dbs_c.clone()))
         .and(warp::any().map(move || sqlite_dbs_c.clone()))
         .and_then(add_conn);
+    let plan_c = plan_db.clone();
     let query_route = warp::any()
         .and(warp::method())
         .and(warp::query::raw().or(warp::any().map(String::new)).unify())
@@ -571,6 +587,7 @@ pub async fn run_dynamic_http(
             warp::serve(
                 index
                     .clone()
+                    .or(explore_status_route.clone())
                     .or(doc_route.clone())
                     .or(add_conn_route.clone())
                     .or(add_query_route.clone())
