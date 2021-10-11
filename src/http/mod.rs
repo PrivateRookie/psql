@@ -1,5 +1,8 @@
-use crate::parser::{ParamValue, Program};
-use futures::{future, lock::Mutex, TryStreamExt};
+use crate::{
+    http::plan::Dialect,
+    parser::{ParamValue, Program},
+};
+use futures::{future, lock::Mutex};
 use openapiv3::OpenAPI;
 use output::{QueryOutput, QueryOutputMapSer};
 pub use plan::Plan;
@@ -7,7 +10,7 @@ use querystring::querify;
 use serde::{Deserialize, Serialize};
 use sqlparser::dialect::MySqlDialect;
 use sqlx::{MySqlPool, SqlitePool};
-use std::{collections::HashMap, convert::Infallible, hash::Hash, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use warp::{
     hyper::{Method, StatusCode},
     Filter,
@@ -38,6 +41,7 @@ async fn dynamic_doc(plan_db: PlanDb) -> Result<impl warp::Reply, Infallible> {
 pub struct NewQuery {
     /// query name
     pub name: String,
+    #[serde(default)]
     /// http method
     pub method: plan::Method,
     /// connection string name
@@ -74,6 +78,69 @@ async fn add_query(
         plan.queries.insert(name, query);
     });
     Ok(warp::reply::json(&{}))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewConn {
+    pub uri: String,
+    pub name: String,
+}
+
+async fn add_conn(
+    new_conn: NewConn,
+    mysql_dbs: Arc<Mutex<HashMap<String, MySqlPool>>>,
+    sqlite_dbs: Arc<Mutex<HashMap<String, SqlitePool>>>,
+) -> Result<impl warp::Reply, Infallible> {
+    let dialect = Dialect::from_uri(&new_conn.uri);
+    let mut code = warp::http::StatusCode::CREATED;
+    match dialect {
+        Dialect::Mysql => match sqlx::MySqlPool::connect(&new_conn.uri).await {
+            Ok(pool) => {
+                let mut mysql_dbs = mysql_dbs.lock().await;
+                mysql_dbs.insert(new_conn.name, pool);
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&ApiMsg {
+                        msg: "new mysql connection added".to_string(),
+                        code: code.as_u16(),
+                    }),
+                    code,
+                ))
+            }
+            Err(e) => {
+                code = warp::http::StatusCode::BAD_REQUEST;
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&ApiMsg {
+                        msg: format!("failed to add mysql connection {}", e.to_string()),
+                        code: code.as_u16(),
+                    }),
+                    code,
+                ))
+            }
+        },
+        Dialect::Sqlite => match sqlx::SqlitePool::connect(&new_conn.uri).await {
+            Ok(pool) => {
+                let mut sqlite_dbs = sqlite_dbs.lock().await;
+                sqlite_dbs.insert(new_conn.name, pool);
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&ApiMsg {
+                        msg: "new sqlite connection added".to_string(),
+                        code: code.as_u16(),
+                    }),
+                    code,
+                ))
+            }
+            Err(e) => {
+                code = warp::http::StatusCode::BAD_REQUEST;
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&ApiMsg {
+                        msg: format!("failed to add sqlite connection {}", e.to_string()),
+                        code: code.as_u16(),
+                    }),
+                    code,
+                ))
+            }
+        },
+    }
 }
 
 fn get_context_from_body(
@@ -303,14 +370,9 @@ fn new_query_body() -> impl Filter<Extract = (Vec<NewQuery>,), Error = warp::Rej
     warp::body::content_length_limit(1024 * 16).and(warp::body::json())
 }
 
-fn maybe_empty_body(
-) -> impl Filter<Extract = (HashMap<String, ParamValue>,), Error = warp::Rejection> + Clone {
-    warp::body::json()
-}
-
 async fn serve_with_context(
     prog: &Program,
-    plan_db: PlanDb,
+    _plan_db: PlanDb,
     query: &Query,
     code: &mut warp::http::StatusCode,
     context: HashMap<String, ParamValue>,
@@ -478,6 +540,15 @@ pub async fn run_dynamic_http(
         .and(new_query_body())
         .and(warp::any().map(move || plan_db.clone()))
         .and_then(add_query);
+    let mysql_dbs_c = mysql_dbs.clone();
+    let sqlite_dbs_c = sqlite_dbs.clone();
+    let add_conn_route = warp::post()
+        .and(warp::path(query_prefix.clone()))
+        .and(warp::path("add_conn"))
+        .and(warp::body::json())
+        .and(warp::any().map(move || mysql_dbs_c.clone()))
+        .and(warp::any().map(move || sqlite_dbs_c.clone()))
+        .and_then(add_conn);
     let query_route = warp::any()
         .and(warp::method())
         .and(warp::query::raw().or(warp::any().map(String::new)).unify())
@@ -501,6 +572,7 @@ pub async fn run_dynamic_http(
                 index
                     .clone()
                     .or(doc_route.clone())
+                    .or(add_conn_route.clone())
                     .or(add_query_route.clone())
                     .or(query_route.clone()),
             )

@@ -1,4 +1,4 @@
-POST  http://localhost:8888/add_query/
+POST  http://localhost:8888/api/add_query/
 
 [
     {
@@ -18,3 +18,50 @@ POST  http://localhost:8888/add_query/
 ###
 
 GET http://localhost:8888/brand
+
+
+###
+POST http://localhost:8888/api/add_conn
+Content-Type: application/json
+
+{
+    "uri": "sqlite://local.db",
+    "name": "local"
+}
+
+###
+POST  http://localhost:8888/api/add_query
+Content-Type: application/json
+
+[
+    {
+    "name": "sqlite",
+    "conn": "local",
+    "sql": "select * from COMPANY;",
+    "path": "student/list"
+    }
+]
+
+###
+
+POST http://localhost:8888/api/add_conn
+Content-Type: application/json
+
+{
+    "uri": "mysql://root:1234TttT@localhost:3306/mysql",
+    "name": "test_mysql"
+}
+
+###
+
+POST  http://localhost:8888/api/add_query
+Content-Type: application/json
+
+[
+    {
+    "name": "test_mysql",
+    "conn": "test_mysql",
+    "sql": "select * from db;",
+    "path": "test_mysql"
+    }
+]
