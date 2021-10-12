@@ -72,7 +72,7 @@ Content-Type: application/json
     {
         "name": "whoami",
         "conn": "test_mysql",
-        "sql": "select DATABASE() AS `database`;",
+        "sql": "SELECT `table_name` AS `name`, `engine`\nFROM information_schema\nWHERE `table_type` = 'BASE TABLE`\nORDER BY `name`",
         "path": "whoami"
     },
     {

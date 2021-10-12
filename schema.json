@@ -114,7 +114,7 @@
         },
         "method": {
           "description": "http method",
-          "default": "get",
+          "default": "GET",
           "allOf": [
             {
               "$ref": "#/definitions/Method"
@@ -141,11 +141,11 @@
     "Method": {
       "type": "string",
       "enum": [
-        "get",
-        "post",
-        "put",
-        "patch",
-        "delete"
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
       ]
     }
   }

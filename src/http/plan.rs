@@ -217,15 +217,15 @@ pub struct Contact {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum Method {
-    #[serde(rename = "get")]
+    #[serde(rename = "GET")]
     Get,
-    #[serde(rename = "post")]
+    #[serde(rename = "POST")]
     Post,
-    #[serde(rename = "put")]
+    #[serde(rename = "PUT")]
     Put,
-    #[serde(rename = "patch")]
+    #[serde(rename = "PATCH")]
     Patch,
-    #[serde(rename = "delete")]
+    #[serde(rename = "DELETE")]
     Delete,
 }
 
