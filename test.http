@@ -91,3 +91,13 @@ Content-Type: application/json
 
 ###
 GET http://localhost:8888/api/explore/status
+
+
+###
+
+POST http://localhost:8888/api/__util/test_connective
+Content-Type: application/json
+
+{
+    "uri": "mysql://root:1234TttT@localhost:3306/default"
+}

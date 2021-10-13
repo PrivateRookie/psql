@@ -9,7 +9,7 @@ pub use plan::Plan;
 use querystring::querify;
 use serde::{Deserialize, Serialize};
 use sqlparser::dialect::MySqlDialect;
-use sqlx::{MySqlPool, SqlitePool};
+use sqlx::{Connection, MySqlPool, SqlitePool};
 use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use warp::{
     hyper::{Method, StatusCode},
@@ -148,6 +148,33 @@ async fn add_conn(
             code,
         ))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewConnUri {
+    pub uri: String,
+}
+
+async fn test_conn(param: NewConnUri) -> Result<impl warp::Reply, Infallible> {
+    let dialect = Dialect::from_uri(&param.uri);
+    let mut code = 200;
+    let msg = match dialect {
+        Dialect::Mysql => match sqlx::MySqlConnection::connect(&param.uri).await {
+            Ok(_) => "OK".to_string(),
+            Err(e) => {
+                code = 400;
+                e.to_string()
+            }
+        },
+        Dialect::Sqlite => match sqlx::SqliteConnection::connect(&param.uri).await {
+            Ok(_) => "OK".to_string(),
+            Err(e) => {
+                code = 400;
+                e.to_string()
+            }
+        },
+    };
+    Ok(warp::reply::json(&ApiMsg { msg, code }))
 }
 
 fn get_context_from_body(
@@ -546,6 +573,11 @@ pub async fn run_dynamic_http(
         .and(warp::path!("explore" / "status"))
         .and(warp::any().map(move || plan_c.clone()))
         .and_then(explore::status);
+    let test_conn_route = warp::post()
+        .and(warp::path(query_prefix.clone()))
+        .and(warp::path!("__util" / "test_connective"))
+        .and(warp::body::json())
+        .and_then(test_conn);
     let plan_c = plan_db.clone();
     let add_query_route = warp::post()
         .and(warp::path(query_prefix.clone()))
@@ -588,6 +620,7 @@ pub async fn run_dynamic_http(
                 index
                     .clone()
                     .or(explore_status_route.clone())
+                    .or(test_conn_route.clone())
                     .or(doc_route.clone())
                     .or(add_conn_route.clone())
                     .or(add_query_route.clone())
