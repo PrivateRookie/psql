@@ -36,6 +36,10 @@ bigdecimal = { version = "0.2", optional = true }
 urlencoding = { version = "2", optional = true }
 futures = { version = "0.3", optional = true }
 
+[[example]]
+name = "server"
+required-features = ["http"]
+
 [features]
 http = [
     "openapiv3",

@@ -3,7 +3,6 @@ use crate::{
     parser::{ParamValue, Program},
 };
 use futures::{future, lock::Mutex};
-use openapiv3::OpenAPI;
 use output::{QueryOutput, QueryOutputMapSer};
 pub use plan::Plan;
 use querystring::querify;
@@ -27,10 +26,6 @@ pub mod plan;
 pub struct ApiMsg {
     pub msg: String,
     pub code: u16,
-}
-
-async fn serve_doc(doc: OpenAPI) -> Result<impl warp::Reply, Infallible> {
-    Ok(warp::reply::json(&doc))
 }
 
 async fn dynamic_doc(plan_db: PlanDb) -> Result<impl warp::Reply, Infallible> {
@@ -78,7 +73,10 @@ async fn add_query(
         };
         plan.queries.insert(name, query);
     });
-    Ok(warp::reply::json(&{}))
+    Ok(warp::reply::json(&ApiMsg {
+        code: 201,
+        msg: "all queries added.",
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -296,108 +294,6 @@ fn get_context_from_qs(qs: String, prog: &Program) -> Result<HashMap<String, Par
         }
     }
     Ok(context)
-}
-
-async fn serve_mysql_query(
-    qs: String,
-    prog: Program,
-    pool: MySqlPool,
-) -> Result<impl warp::Reply, Infallible> {
-    let mut code = warp::http::StatusCode::BAD_REQUEST;
-    match get_context_from_qs(qs, &prog) {
-        Ok(context) => match prog.render(&MySqlDialect {}, &context) {
-            Ok(stmts) => {
-                if stmts.len() != 1 {
-                    let msg = ApiMsg {
-                        msg: format!("expect 1 sql statement, got {}", stmts.len()),
-                        code: code.as_u16(),
-                    };
-                    return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
-                }
-                let stmt = stmts.first().unwrap();
-                match sqlx::query(&stmt.to_string())
-                    .fetch_all(&pool)
-                    .await
-                    .map(|rows| QueryOutput { rows })
-                {
-                    Ok(output) => {
-                        code = warp::http::StatusCode::OK;
-                        let json = warp::reply::json(&QueryOutputMapSer(&output));
-                        Ok(warp::reply::with_status(json, code))
-                    }
-                    Err(e) => {
-                        let msg = ApiMsg {
-                            msg: format!("SQL: {}\n{}", &stmt, e),
-                            code: code.as_u16(),
-                        };
-                        Ok(warp::reply::with_status(warp::reply::json(&msg), code))
-                    }
-                }
-            }
-            Err(e) => {
-                let msg = ApiMsg {
-                    msg: format!("{:#?}", e),
-                    code: code.as_u16(),
-                };
-                Ok(warp::reply::with_status(warp::reply::json(&msg), code))
-            }
-        },
-        Err(msg) => Ok(warp::reply::with_status(
-            warp::reply::json(&msg),
-            StatusCode::from_u16(msg.code).unwrap(),
-        )),
-    }
-}
-
-async fn serve_sqlite_query(
-    qs: String,
-    prog: Program,
-    pool: SqlitePool,
-) -> Result<impl warp::Reply, Infallible> {
-    let mut code = warp::http::StatusCode::BAD_REQUEST;
-    match get_context_from_qs(qs, &prog) {
-        Ok(context) => match prog.render(&MySqlDialect {}, &context) {
-            Ok(stmts) => {
-                if stmts.len() != 1 {
-                    let msg = ApiMsg {
-                        msg: format!("expect 1 sql statement, got {}", stmts.len()),
-                        code: code.as_u16(),
-                    };
-                    return Ok(warp::reply::with_status(warp::reply::json(&msg), code));
-                }
-                let stmt = stmts.first().unwrap();
-                match sqlx::query(&stmt.to_string())
-                    .fetch_all(&pool)
-                    .await
-                    .map(|rows| QueryOutput { rows })
-                {
-                    Ok(output) => {
-                        code = warp::http::StatusCode::OK;
-                        let json = warp::reply::json(&QueryOutputMapSer(&output));
-                        Ok(warp::reply::with_status(json, code))
-                    }
-                    Err(e) => {
-                        let msg = ApiMsg {
-                            msg: format!("SQL: {}\n{}", &stmt, e),
-                            code: code.as_u16(),
-                        };
-                        Ok(warp::reply::with_status(warp::reply::json(&msg), code))
-                    }
-                }
-            }
-            Err(e) => {
-                let msg = ApiMsg {
-                    msg: format!("{:#?}", e),
-                    code: code.as_u16(),
-                };
-                Ok(warp::reply::with_status(warp::reply::json(&msg), code))
-            }
-        },
-        Err(msg) => Ok(warp::reply::with_status(
-            warp::reply::json(&msg),
-            StatusCode::from_u16(msg.code).unwrap(),
-        )),
-    }
 }
 
 fn new_query_body() -> impl Filter<Extract = (Vec<NewQuery>,), Error = warp::Rejection> + Clone {
@@ -631,120 +527,5 @@ pub async fn run_dynamic_http(
         })
         .collect::<Vec<_>>();
     future::join_all(fs).await;
-    Ok(())
-}
-
-pub async fn run_http(
-    plan: Plan,
-    doc: OpenAPI,
-    mysql_conns: HashMap<String, sqlx::MySqlPool>,
-    sqlite_conns: HashMap<String, sqlx::SqlitePool>,
-) -> Result<(), ()> {
-    let prefix = plan.prefix.clone();
-    let doc_path = plan.doc_path.clone();
-    let doc_route = warp::get()
-        .and(warp::path(prefix.clone()))
-        .and(warp::path(plan.doc_path.clone()))
-        .and(warp::any().map(move || doc.clone()))
-        .and_then(serve_doc);
-    let index = warp::get()
-        .and(warp::path("index"))
-        .and(warp::any().map(move || format!("{}/{}", &prefix, &doc_path)))
-        .and_then(index::serve_index);
-    let queries = plan.queries.clone();
-    let prefix = plan.prefix.clone();
-    let prefix_cloned = plan.prefix.clone();
-    let mysql_api_routes = queries
-        .clone()
-        .into_iter()
-        .filter(|(_name, query)| plan.mysql_conns.get(&query.conn).is_some())
-        .map(move |(_name, query)| {
-            let pool = mysql_conns.get(&query.conn).cloned().unwrap();
-            let prog = query.read_sql().unwrap();
-            warp::get()
-                .and(warp::path(prefix.clone()))
-                .and(warp::path(query.path))
-                .and(warp::query::raw().or(warp::any().map(String::new)).unify())
-                .and(warp::any().map(move || prog.clone()))
-                .and(warp::any().map(move || pool.clone()))
-                .and_then(serve_mysql_query)
-                .boxed()
-        })
-        .reduce(|pre, next| pre.or(next).unify().boxed());
-    let sqlite_api_routes = queries
-        .clone()
-        .into_iter()
-        .filter(|(_name, query)| plan.sqlite_conns.get(&query.conn).is_some())
-        .map(move |(_name, query)| {
-            let pool = sqlite_conns.get(&query.conn).cloned().unwrap();
-            let prog = query.read_sql().unwrap();
-            warp::get()
-                .and(warp::path(prefix_cloned.clone()))
-                .and(warp::path(query.path))
-                .and(warp::query::raw().or(warp::any().map(String::new)).unify())
-                .and(warp::any().map(move || prog.clone()))
-                .and(warp::any().map(move || pool.clone()))
-                .and_then(serve_sqlite_query)
-                .boxed()
-        })
-        .reduce(|pre, next| pre.or(next).unify().boxed());
-    match (mysql_api_routes, sqlite_api_routes) {
-        (None, None) => {
-            let fs = plan
-                .address
-                .iter()
-                .map(move |addr| {
-                    warp::serve(index.clone().or(doc_route.clone()))
-                        .bind_ephemeral((addr.ip(), addr.port()))
-                        .1
-                })
-                .collect::<Vec<_>>();
-
-            future::join_all(fs).await;
-        }
-        (None, Some(routes)) => {
-            let fs = plan
-                .address
-                .iter()
-                .map(move |addr| {
-                    warp::serve(index.clone().or(doc_route.clone()).or(routes.clone()))
-                        .bind_ephemeral((addr.ip(), addr.port()))
-                        .1
-                })
-                .collect::<Vec<_>>();
-            future::join_all(fs).await;
-        }
-        (Some(routes), None) => {
-            let fs = plan
-                .address
-                .iter()
-                .map(move |addr| {
-                    warp::serve(index.clone().or(doc_route.clone()).or(routes.clone()))
-                        .bind_ephemeral((addr.ip(), addr.port()))
-                        .1
-                })
-                .collect::<Vec<_>>();
-            future::join_all(fs).await;
-        }
-        (Some(mysql_api), Some(sqlite_api)) => {
-            let fs = plan
-                .address
-                .iter()
-                .map(move |addr| {
-                    warp::serve(
-                        index
-                            .clone()
-                            .or(doc_route.clone())
-                            .or(mysql_api.clone())
-                            .or(sqlite_api.clone()),
-                    )
-                    .bind_ephemeral((addr.ip(), addr.port()))
-                    .1
-                })
-                .collect::<Vec<_>>();
-            future::join_all(fs).await;
-        }
-    }
-
     Ok(())
 }
