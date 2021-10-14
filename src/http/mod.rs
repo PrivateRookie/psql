@@ -37,17 +37,8 @@ async fn dynamic_doc(plan_db: PlanDb) -> Result<impl warp::Reply, Infallible> {
 pub struct NewQuery {
     /// query name
     pub name: String,
-    #[serde(default)]
-    /// http method
-    pub method: plan::Method,
-    /// connection string name
-    pub conn: String,
-    /// api summary
-    pub summary: Option<String>,
-    /// query sql or path starts with '@'
-    pub sql: String,
-    /// api relative url path
-    pub path: String,
+    #[serde(flatten)]
+    pub query: Query,
 }
 
 async fn add_query(
@@ -56,26 +47,12 @@ async fn add_query(
 ) -> Result<impl warp::Reply, Infallible> {
     let mut plan = plan_db.lock().await;
     new_queries.into_iter().for_each(|new_query| {
-        let NewQuery {
-            name,
-            method,
-            conn,
-            summary,
-            sql,
-            path,
-        } = new_query;
-        let query = Query {
-            conn,
-            method,
-            summary,
-            sql,
-            path,
-        };
+        let NewQuery { name, query } = new_query;
         plan.queries.insert(name, query);
     });
     Ok(warp::reply::json(&ApiMsg {
         code: 201,
-        msg: "all queries added.",
+        msg: "all queries added.".to_string(),
     }))
 }
 
@@ -308,7 +285,7 @@ async fn serve_with_context(
     context: HashMap<String, ParamValue>,
     mysql_dbs: Arc<Mutex<HashMap<String, MySqlPool>>>,
     sqlite_dbs: Arc<Mutex<HashMap<String, SqlitePool>>>,
-) -> Result<warp::reply::WithStatus<warp::reply::Json>, Infallible> {
+) -> Result<warp::reply::WithStatus<warp::reply::Json>, warp::Rejection> {
     match prog.render(&MySqlDialect {}, &context) {
         Ok(stmts) => {
             if stmts.len() != 1 {
@@ -316,10 +293,7 @@ async fn serve_with_context(
                     msg: format!("expect 1 sql statement, got {}", stmts.len()),
                     code: code.as_u16(),
                 };
-                return Ok(warp::reply::with_status(
-                    warp::reply::json(&msg),
-                    code.clone(),
-                ));
+                return Ok(warp::reply::with_status(warp::reply::json(&msg), *code));
             }
             let stmt = stmts.first().unwrap();
             match mysql_dbs.lock().await.get(&query.conn) {
@@ -339,10 +313,7 @@ async fn serve_with_context(
                                 msg: format!("SQL: {}\n{}", &stmt, e),
                                 code: code.as_u16(),
                             };
-                            Ok(warp::reply::with_status(
-                                warp::reply::json(&msg),
-                                code.clone(),
-                            ))
+                            Ok(warp::reply::with_status(warp::reply::json(&msg), *code))
                         }
                     }
                 }
@@ -364,10 +335,7 @@ async fn serve_with_context(
                                 msg: format!("SQL: {}\n{}", &stmt, e),
                                 code: code.as_u16(),
                             };
-                            Ok(warp::reply::with_status(
-                                warp::reply::json(&msg),
-                                code.clone(),
-                            ))
+                            Ok(warp::reply::with_status(warp::reply::json(&msg), *code))
                         }
                     }
                 }
@@ -378,10 +346,7 @@ async fn serve_with_context(
                 msg: format!("{:#?}", e),
                 code: code.as_u16(),
             };
-            Ok(warp::reply::with_status(
-                warp::reply::json(&msg),
-                code.clone(),
-            ))
+            Ok(warp::reply::with_status(warp::reply::json(&msg), *code))
         }
     }
 }
@@ -394,7 +359,7 @@ async fn serve_query(
     plan_db: PlanDb,
     mysql_dbs: Arc<Mutex<HashMap<String, MySqlPool>>>,
     sqlite_dbs: Arc<Mutex<HashMap<String, SqlitePool>>>,
-) -> Result<impl warp::Reply, Infallible> {
+) -> Result<impl warp::Reply, warp::Rejection> {
     let plan = plan_db.lock().await;
     let all_paths: Vec<(String, Query)> = plan
         .queries
@@ -463,6 +428,9 @@ pub async fn run_dynamic_http(
         .and(warp::path("index"))
         .and(warp::any().map(move || format!("{}/{}", &prefix.clone(), &doc_path)))
         .and_then(index::serve_index);
+    let favicon = warp::get()
+        .and(warp::path("favicon.ico"))
+        .and_then(index::favicon);
     let plan_c = plan_db.clone();
     let explore_status_route = warp::get()
         .and(warp::path(query_prefix.clone()))
@@ -501,7 +469,7 @@ pub async fn run_dynamic_http(
             warp::body::json()
                 .or(warp::body::form())
                 .unify()
-                .or(warp::any().map(|| HashMap::default()))
+                .or(warp::any().map(HashMap::default))
                 .unify(),
         )
         .and(warp::any().map(move || plan_c.clone()))
@@ -515,6 +483,7 @@ pub async fn run_dynamic_http(
             warp::serve(
                 index
                     .clone()
+                    .or(favicon)
                     .or(explore_status_route.clone())
                     .or(test_conn_route.clone())
                     .or(doc_route.clone())

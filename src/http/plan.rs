@@ -125,9 +125,10 @@ impl Plan {
         let mut paths = IndexMap::new();
         self.queries.clone().into_iter().for_each(|(_, query)| {
             let prog = query.read_sql().unwrap();
-            let Query { summary, .. } = query;
+            let Query { summary, tags, .. } = query;
             let mut operation = openapiv3::Operation {
                 summary,
+                tags,
                 responses: openapiv3::Responses {
                     default: Some(ReferenceOr::Item(openapiv3::Response {
                         description: "default response".to_string(),
@@ -199,8 +200,6 @@ impl Dialect {
     pub fn from_uri(uri: &str) -> Self {
         if uri.starts_with("mysql") {
             Self::Mysql
-        } else if uri.starts_with("sqlite") {
-            Self::Sqlite
         } else {
             Self::Sqlite
         }
@@ -261,11 +260,14 @@ pub struct Query {
     pub sql: String,
     /// api relative url path
     pub path: String,
+    /// api tags
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl Query {
     pub fn read_sql(&self) -> Result<Program, PSqlError> {
-        let sql_str = if self.sql.starts_with("@") {
+        let sql_str = if self.sql.starts_with('@') {
             let path = self.sql.trim_start_matches('@');
             let mut sql_str = String::new();
 

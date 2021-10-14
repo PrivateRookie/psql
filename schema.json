@@ -135,6 +135,14 @@
         "path": {
           "description": "api relative url path",
           "type": "string"
+        },
+        "tags": {
+          "description": "api tags",
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
