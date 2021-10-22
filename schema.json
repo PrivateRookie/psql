@@ -4,7 +4,6 @@
   "description": "http serve config",
   "type": "object",
   "required": [
-    "queries",
     "title"
   ],
   "properties": {
@@ -68,6 +67,7 @@
     },
     "queries": {
       "description": "api paths",
+      "default": {},
       "type": "object",
       "additionalProperties": {
         "$ref": "#/definitions/Query"

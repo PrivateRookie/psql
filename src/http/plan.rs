@@ -53,6 +53,7 @@ pub struct Plan {
     #[serde(default)]
     pub mysql_conns: HashMap<String, String>,
     /// api paths
+    #[serde(default)]
     pub queries: IndexMap<String, Query>,
 }
 
