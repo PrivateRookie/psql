@@ -149,7 +149,7 @@ export const tableColumn = (dialect, conn) => {
  * @returns {NewQuery}
  */
 export const tableFk = (dialect, conn) => {
-  let sql = notSupportSql("get table foreign key");
+  let sql = notSupportSql(conn, "get table foreign key");
   if (dialect == "mysql") {
     sql = `--? table: str // 表名称
     SELECT

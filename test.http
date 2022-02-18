@@ -21,25 +21,82 @@ GET http://localhost:8888/brand
 
 
 ###
-POST http://localhost:8888/api/add_conn
+POST http://localhost:8888/api/add_conn/
 Content-Type: application/json
 
-{
+[
+    {
     "uri": "sqlite://local.db",
     "name": "local"
 }
+]
 
 ###
 POST  http://localhost:8888/api/add_query
 Content-Type: application/json
 
 [
-    {
-    "name": "sqlite",
+  {
+    "name": "table_column",
     "conn": "local",
-    "sql": "select * from COMPANY;",
-    "path": "student/list"
-    }
+    "method": "GET",
+    "summary": "list table column",
+    "path": "local/__meta/table_column",
+    "tags": [
+      "database_meta"
+    ]
+  },
+  {
+    "name": "schema",
+    "sql": "SELECT 'local' AS `db`, 'sqlite do not support database() function!' as `msg`",
+    "method": "GET",
+    "conn": "local",
+    "summary": "get database name",
+    "tags": [
+      "database_meta"
+    ],
+    "path": "local/__meta/schema"
+  },
+  {
+    "name": "tables",
+    "conn": "local",
+    "method": "GET",
+    "summary": "list database tables",
+    "sql": "SELECT `tbl_name` AS `name`\nFROM sqlite_master\nWHERE type = 'table' AND `tbl_name` not like 'sqlite_%'",
+    "path": "local/__meta/tables",
+    "tags": [
+      "database_meta"
+    ]
+  },
+  {
+    "name": "table_index",
+    "conn": "local",
+    "method": "GET",
+    "summary": "list table index",
+    "sql": "--? table: str // 表名\n    SELECT `name`\n    FROM sqlite_master\n    WHERE type = 'index' AND tbl_name = @table\n    ",
+    "path": "local/__meta/table_index",
+    "tags": [
+      "database_meta"
+    ]
+  },
+  {
+    "name": "table_fk",
+    "conn": "local",
+    "method": "GET",
+    "summary": "get foreign key",
+    "path": "local/__meta/table_fk",
+    "tags": [
+      "database_meta"
+    ]
+  },
+  {
+    "name": "fk",
+    "conn": "local",
+    "method": "GET",
+    "summary": "list all foreign key of a database",
+    "path": "local/__meta/fk",
+    "tags": ["database_meta"]
+  }
 ]
 
 ###
@@ -101,3 +158,7 @@ Content-Type: application/json
 {
     "uri": "mysql://root:1234TttT@localhost:3306/default"
 }
+
+### 
+
+POST http://localhost:8888/api/add_conn
