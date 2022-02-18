@@ -1,0 +1,27 @@
+{
+  "name": "psql",
+  "version": "0.2.0",
+  "description": "psql js client",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PrivateRookie/psql.git"
+  },
+  "keywords": [
+    "sql",
+    "rust",
+    "restapi"
+  ],
+  "author": "PrivateRookie",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/PrivateRookie/psql/issues"
+  },
+  "homepage": "https://github.com/PrivateRookie/psql#readme",
+  "devDependencies": {
+    "axios": "^0.26.0"
+  }
+}
