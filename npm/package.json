@@ -1,5 +1,5 @@
 {
-  "name": "psql",
+  "name": "@privaterookie/psql",
   "version": "0.2.0",
   "description": "psql js client",
   "main": "src/index.js",
