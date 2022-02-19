@@ -215,7 +215,7 @@ pub fn all_fk_query(dialect: &DBDialect, conn: &str) -> NewQuery {
 /// add new query
 pub async fn add_query(client: &Client, base_url: &str, queries: Vec<NewQuery>) -> Resp {
     client
-        .post(format!("{base_url}/api_add_query"))
+        .post(format!("{base_url}/api/add_query"))
         .json(&queries)
         .send()
         .await
@@ -225,14 +225,14 @@ pub async fn add_query(client: &Client, base_url: &str, queries: Vec<NewQuery>) 
 pub async fn add_conn(client: &Client, base_url: &str, name: &str, db_uri: &str) -> Resp {
     let resp = client
         .post(format!("{base_url}/api/add_conn"))
-        .json(&json!({
+        .json(&vec![json!({
             "name": name,
             "uri": db_uri
-        }))
+        })])
         .send()
         .await?;
     let dialect = DBDialect::detect(db_uri);
-    add_query(
+    let r = add_query(
         client,
         base_url,
         vec![
@@ -245,6 +245,7 @@ pub async fn add_conn(client: &Client, base_url: &str, name: &str, db_uri: &str)
         ],
     )
     .await?;
+    dbg!(r.text().await.unwrap());
     Ok(resp)
 }
 
@@ -302,4 +303,17 @@ pub async fn table_fk(client: &Client, base_url: &str, db: &str, table: &str) ->
         }))
         .send()
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const BASE: &str = "http://localhost:8888";
+
+    #[tokio::test]
+    async fn add() {
+        let client = reqwest::Client::new();
+        let _resp = add_conn(&client, BASE, "local", "sqlite://local.db").await;
+        let _resp = db_tables(&client, BASE, "local").await;
+    }
 }
