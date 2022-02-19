@@ -127,13 +127,13 @@ pub fn table_column_query(dialect: &DBDialect, conn: &str) -> NewQuery {
         DBDialect::Mysql => format!(
             r#"--? table: str // 表名称
         select
-            TABLE_SCHEMA AS \`db\`, COLUMN_NAME AS \`column_name\`, COLUMN_DEFAULT AS \`default_value\`, IS_NULLABLE AS \`is_nullable\`, DATA_TYPE AS \`type\`, COLUMN_KEY AS \`pk\`
+            TABLE_SCHEMA AS `db`, COLUMN_NAME AS `column_name`, COLUMN_DEFAULT AS `default_value`, IS_NULLABLE AS `is_nullable`, DATA_TYPE AS `type`, COLUMN_KEY AS `pk`
         from information_schema.columns
-        where table_name = @table AND \`TABLE_SCHEMA\` = DATABASE() "#
+        where table_name = @table AND `TABLE_SCHEMA` = DATABASE() "#
         ),
         DBDialect::Sqlite => format!(
             r#"--? table: str // 表名称
-        SELECT \`name\` AS \`column_name\`, \`dflt_value\` AS \`default_value\`, \`notnull\` AS \`is_nullable\`, \`type\`, \`pk\`
+        SELECT `name` AS `column_name`, `dflt_value` AS `default_value`, `notnull` AS `is_nullable`, `type`, `pk`
         FROM pragma_table_info(@table)"#
         ),
         DBDialect::Unknown => not_support_sql(conn, "get table columns"),
@@ -156,13 +156,13 @@ pub fn table_fk_query(dialect: &DBDialect, conn: &str) -> NewQuery {
         DBDialect::Mysql => format!(
             r#"--? table: str // 表名称
         SELECT
-            CONSTRAINT_SCHEMA AS \`db\`, CONSTRAINT_NAME AS \`name\`, UPDATE_RULE as \`update_rule\`, DELETE_RULE as \`delete_rule\`, TABLE_NAME as \`table\`, REFERENCED_TABLE_NAME as \`referenced_table\`
+            CONSTRAINT_SCHEMA AS `db`, CONSTRAINT_NAME AS `name`, UPDATE_RULE as `update_rule`, DELETE_RULE as `delete_rule`, TABLE_NAME as `table`, REFERENCED_TABLE_NAME as `referenced_table`
         FROM information_schema.REFERENTIAL_CONSTRAINTS
-        WHERE \`db\` = DATABASE() AND \`TABLE_NAME\` = @table"#
+        WHERE `db` = DATABASE() AND `TABLE_NAME` = @table"#
         ),
         DBDialect::Sqlite => format!(
             r#"--? table: str // 表名称
-        SELECT \`from\` AS \`name\`, @table AS \`table\`, \`table\` AS \`referenced_table\`
+        SELECT `from` AS `name`, @table AS `table`, `table` AS `referenced_table`
         FROM pragma_foreign_key_list(@table)"#
         ),
         DBDialect::Unknown => not_support_sql(conn, "get table foreign key"),
@@ -184,16 +184,16 @@ pub fn all_fk_query(dialect: &DBDialect, conn: &str) -> NewQuery {
     let sql = match dialect {
         DBDialect::Mysql => format!(
             r#"select
-        CONSTRAINT_SCHEMA AS \`db\`, CONSTRAINT_NAME AS \`name\`, UPDATE_RULE as \`update_rule\`, DELETE_RULE as \`delete_rule\`, TABLE_NAME as \`table\`, REFERENCED_TABLE_NAME as \`referenced_table\`
+        CONSTRAINT_SCHEMA AS `db`, CONSTRAINT_NAME AS `name`, UPDATE_RULE as `update_rule`, DELETE_RULE as `delete_rule`, TABLE_NAME as `table`, REFERENCED_TABLE_NAME as `referenced_table`
         from information_schema.REFERENTIAL_CONSTRAINTS
-        WHERE \`CONSTRAINT_SCHEMA\` = DATABASE()"#
+        WHERE `CONSTRAINT_SCHEMA` = DATABASE()"#
         ),
         DBDialect::Sqlite => format!(
             r#"SELECT
-        p.\`from\`, m.name AS \`table\`, p."table" AS \`referenced_table\`
+        p.`from`, m.name AS `table`, p."table" AS `referenced_table`
     FROM
         sqlite_master m
-        JOIN pragma_foreign_key_list(m.name) p ON m.name != p.\`table\`
+        JOIN pragma_foreign_key_list(m.name) p ON m.name != p.`table`
     WHERE m.type = 'table'
     ORDER BY m.name"#
         ),
