@@ -270,11 +270,7 @@ pub async fn db_tables(client: &Client, base_url: &str, db: &str) -> Resp {
 pub async fn table_columns(client: &Client, base_url: &str, db: &str, table: &str) -> Resp {
     client
         .get(format!("{base_url}/api/{db}/__meta/table_column"))
-        .json(&json!({
-            "params": {
-                "table": table
-            }
-        }))
+        .query(&json!({ "table": table }))
         .send()
         .await
 }
@@ -283,10 +279,8 @@ pub async fn table_columns(client: &Client, base_url: &str, db: &str, table: &st
 pub async fn table_indexes(client: &Client, base_url: &str, db: &str, table: &str) -> Resp {
     client
         .get(format!("{base_url}/api/{db}/__meta/table_index"))
-        .json(&json!({
-            "params": {
-                "table": table
-            }
+        .query(&json!({
+            "table": table
         }))
         .send()
         .await
@@ -296,10 +290,8 @@ pub async fn table_indexes(client: &Client, base_url: &str, db: &str, table: &st
 pub async fn table_fk(client: &Client, base_url: &str, db: &str, table: &str) -> Resp {
     client
         .get(format!("{base_url}/api/{db}/__meta/table_fk"))
-        .json(&json!({
-            "params": {
-                "table": table
-            }
+        .query(&json!({
+            "table": table
         }))
         .send()
         .await
@@ -315,5 +307,7 @@ mod tests {
         let client = reqwest::Client::new();
         let _resp = add_conn(&client, BASE, "local", "sqlite://local.db").await;
         let _resp = db_tables(&client, BASE, "local").await;
+        let resp = table_columns(&client, BASE, "local", "Person").await;
+        dbg!(resp.unwrap().text().await.unwrap());
     }
 }
