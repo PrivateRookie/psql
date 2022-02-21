@@ -6,6 +6,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+pub use psql::http::ApiMsg;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DBDialect {
     #[serde(rename = "mysql")]
@@ -190,7 +192,7 @@ pub fn all_fk_query(dialect: &DBDialect, conn: &str) -> NewQuery {
         ),
         DBDialect::Sqlite => format!(
             r#"SELECT
-        p.`from`, m.name AS `table`, p."table" AS `referenced_table`
+        p.`from`, m.name AS `table`, p.`table` AS `referenced_table`
     FROM
         sqlite_master m
         JOIN pragma_foreign_key_list(m.name) p ON m.name != p.`table`
@@ -232,7 +234,7 @@ pub async fn add_conn(client: &Client, base_url: &str, name: &str, db_uri: &str)
         .send()
         .await?;
     let dialect = DBDialect::detect(db_uri);
-    let r = add_query(
+    let _r = add_query(
         client,
         base_url,
         vec![
@@ -245,7 +247,6 @@ pub async fn add_conn(client: &Client, base_url: &str, name: &str, db_uri: &str)
         ],
     )
     .await?;
-    dbg!(r.text().await.unwrap());
     Ok(resp)
 }
 
@@ -279,9 +280,7 @@ pub async fn table_columns(client: &Client, base_url: &str, db: &str, table: &st
 pub async fn table_indexes(client: &Client, base_url: &str, db: &str, table: &str) -> Resp {
     client
         .get(format!("{base_url}/api/{db}/__meta/table_index"))
-        .query(&json!({
-            "table": table
-        }))
+        .query(&json!({ "table": table }))
         .send()
         .await
 }
@@ -290,9 +289,14 @@ pub async fn table_indexes(client: &Client, base_url: &str, db: &str, table: &st
 pub async fn table_fk(client: &Client, base_url: &str, db: &str, table: &str) -> Resp {
     client
         .get(format!("{base_url}/api/{db}/__meta/table_fk"))
-        .query(&json!({
-            "table": table
-        }))
+        .query(&json!({ "table": table }))
+        .send()
+        .await
+}
+
+pub async fn db_fk(client: &Client, base_url: &str, db: &str) -> Resp {
+    client
+        .get(format!("{base_url}/api/{db}/__meta/fk"))
         .send()
         .await
 }
@@ -306,8 +310,9 @@ mod tests {
     async fn add() {
         let client = reqwest::Client::new();
         let _resp = add_conn(&client, BASE, "local", "sqlite://local.db").await;
-        let _resp = db_tables(&client, BASE, "local").await;
-        let resp = table_columns(&client, BASE, "local", "Person").await;
-        dbg!(resp.unwrap().text().await.unwrap());
+        let resp = db_fk(&client, BASE, "local").await;
+        // let _resp = db_tables(&client, BASE, "local").await;
+        // let resp = table_columns(&client, BASE, "local", "Person").await;
+        dbg!(resp.unwrap().json::<serde_json::Value>().await.unwrap());
     }
 }
