@@ -192,7 +192,7 @@ pub fn all_fk_query(dialect: &DBDialect, conn: &str) -> NewQuery {
         ),
         DBDialect::Sqlite => format!(
             r#"SELECT
-        p.`from`, m.name AS `table`, p.`table` AS `referenced_table`
+        p.`from` as `name`, m.name AS `table`, p.`table` AS `referenced_table`
     FROM
         sqlite_master m
         JOIN pragma_foreign_key_list(m.name) p ON m.name != p.`table`
