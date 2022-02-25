@@ -185,7 +185,7 @@ impl<'a> Serialize for PSqlColumn<'a, MySqlColumn, MySqlValueRef<'a>> {
                     let b64_str = val.try_decode::<Vec<u8>>().map(base64::encode).unwrap();
                     serializer.serialize_str(&b64_str)
                 }
-                t => unreachable!(t),
+                t => unreachable!("{}", t),
             }
         }
     }
@@ -239,7 +239,7 @@ impl<'a> Serialize for PSqlColumn<'a, SqliteColumn, SqliteValueRef<'a>> {
                     serializer.serialize_str(&v)
                 }
 
-                t => unreachable!(t),
+                t => unreachable!("{}", t),
             }
         }
     }
